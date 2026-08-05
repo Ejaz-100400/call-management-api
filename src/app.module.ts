@@ -7,6 +7,7 @@ import { EmployeesModule } from './employees/employees.module';
 import { ExportModule } from './export/export.module';
 import { FollowUpsModule } from './follow-ups/follow-ups.module';
 import { HealthController } from './health/health.controller';
+import { ImportModule } from './import/import.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { QueueModule } from './queue/queue.module';
@@ -25,6 +26,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     FollowUpsModule,
     ReportsModule,
     ExportModule,
+    ImportModule,
     BusinessNumbersModule,
     WebhooksModule,
   ],
