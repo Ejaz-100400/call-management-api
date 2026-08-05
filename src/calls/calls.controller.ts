@@ -1,0 +1,61 @@
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { User } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { CallsService } from './calls.service';
+import { QueryCallsDto } from './dto/query-calls.dto';
+import { UpdateExtractionDto } from './dto/update-extraction.dto';
+
+@Controller('calls')
+export class CallsController {
+  constructor(private readonly callsService: CallsService) {}
+
+  // GET /calls?search=&phone=&carModel=&category=&dateFrom=&dateTo=&employeeId=
+  @Get()
+  findAll(@Query() query: QueryCallsDto) {
+    return this.callsService.findAll(query);
+  }
+
+  @Get(':id')
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.callsService.findOne(id);
+  }
+
+  @Get(':id/recording')
+  getRecording(@Param('id', ParseUUIDPipe) id: string) {
+    return this.callsService.getRecordingUrl(id);
+  }
+
+  @Patch(':id/extraction')
+  @Roles('admin', 'manager')
+  updateExtraction(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateExtractionDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.callsService.updateExtraction(id, dto, user.id);
+  }
+
+  @Delete(':id')
+  @Roles('admin')
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+    return this.callsService.remove(id, user.id);
+  }
+
+  @Post(':id/reprocess')
+  @Roles('admin', 'manager')
+  reprocess(@Param('id', ParseUUIDPipe) id: string) {
+    return this.callsService.reprocess(id);
+  }
+
+  @Get(':id/processing-status')
+  getProcessingStatus(@Param('id', ParseUUIDPipe) id: string) {
+    return this.callsService.getProcessingStatus(id);
+  }
+
+  @Post(':id/extraction/regenerate-summary')
+  @Roles('admin', 'manager')
+  regenerateSummary(@Param('id', ParseUUIDPipe) id: string) {
+    return this.callsService.regenerateSummary(id);
+  }
+}

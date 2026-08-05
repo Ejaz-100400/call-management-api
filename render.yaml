@@ -1,0 +1,91 @@
+# Render Blueprint -- deploys the API, the worker, and a managed Redis
+# instance together from this one repo. In the Render dashboard: New ->
+# Blueprint -> connect this repo -> Render reads this file automatically.
+#
+# Env vars marked `sync: false` are secrets -- Render will prompt for each
+# one in the dashboard during setup rather than storing them in this file
+# (which is committed to the repo). Have your .env values handy.
+#
+# If Render's current Blueprint schema has drifted from this (their spec
+# does evolve), the dashboard's Blueprint import will flag any mismatches
+# when you connect the repo -- fix field names there against whatever it
+# reports.
+
+services:
+  - type: web
+    name: call-management-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: CAR_GLASSES_NUMBER
+        sync: false
+      - key: CAR_MODIFICATIONS_NUMBER
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: EXOTEL_ACCOUNT_SID
+        sync: false
+      - key: EXOTEL_API_KEY
+        sync: false
+      - key: EXOTEL_API_TOKEN
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: call-management-redis
+          property: connectionString
+
+  - type: worker
+    name: call-management-worker
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run worker:start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: call-management-redis
+          property: connectionString
+
+  - type: redis
+    name: call-management-redis
+    plan: starter
+    ipAllowList: []
