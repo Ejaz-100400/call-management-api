@@ -97,6 +97,8 @@ async function fullReprocess(callId: string, recordingUrl?: string) {
       },
     });
 
+    await backfillCustomerName(call.customerId, extraction.customerName);
+
     if (extraction.followUpRequired && extraction.followUpDate) {
       await prisma.followUp.create({
         data: {
@@ -138,6 +140,21 @@ async function regenerateSummary(callId: string) {
       sentiment: extraction.sentiment,
       extractedAt: new Date(),
     },
+  });
+}
+
+/**
+ * The Customer link itself comes from the webhook's caller-ID field
+ * (webhooks.service.ts) -- the AI can't reliably identify a caller's own
+ * phone number from a transcript. What it CAN pick up is the caller stating
+ * their name, so once a customer is linked but still nameless, backfill it
+ * from the extraction rather than leaving the directory full of blanks.
+ */
+async function backfillCustomerName(customerId: string | null, customerName: string | null | undefined) {
+  if (!customerId || !customerName) return;
+  await prisma.customer.updateMany({
+    where: { id: customerId, name: null },
+    data: { name: customerName },
   });
 }
 

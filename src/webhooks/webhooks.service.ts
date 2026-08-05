@@ -13,15 +13,20 @@ export class WebhooksService {
   ) {}
 
   async handleCallCompleted(payload: Record<string, unknown>) {
-    // NOTE: the field names below (CallSid, To, StartTime, Duration, RecordingUrl)
-    // are placeholders. Exotel/Ozonetel/Knowlarity/Twilio each use a different
-    // webhook payload shape -- swap these for whatever your provider actually sends.
+    // NOTE: the field names below (CallSid, From, To, StartTime, Duration,
+    // RecordingUrl) are placeholders. Exotel/Ozonetel/Knowlarity/Twilio each
+    // use a different webhook payload shape -- swap these for whatever your
+    // provider actually sends.
     this.logger.log(`Received call-completed webhook: ${JSON.stringify(payload)}`);
+
+    const callerPhone = (payload.From as string | undefined)?.trim();
+    const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
 
     const call = await this.prisma.call.create({
       data: {
         externalCallId: (payload.CallSid as string) ?? undefined,
         businessCategory: this.resolveCategory(payload.To as string),
+        customerId: customer?.id,
         callDate: payload.StartTime ? new Date(payload.StartTime as string) : new Date(),
         durationSeconds: Number(payload.Duration ?? 0),
         recordingStorageKey: null, // filled in once the worker uploads it to object storage
@@ -39,6 +44,14 @@ export class WebhooksService {
     });
 
     return { received: true, callId: call.id };
+  }
+
+  private findOrCreateCustomer(phoneNumber: string) {
+    return this.prisma.customer.upsert({
+      where: { phoneNumber },
+      create: { phoneNumber },
+      update: {},
+    });
   }
 
   private resolveCategory(businessNumber: string): BusinessCategory {
