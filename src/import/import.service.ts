@@ -98,6 +98,15 @@ export class ImportService {
     return Buffer.from(rawBuffer as unknown as ArrayBuffer);
   }
 
+  history() {
+    return this.prisma.auditLog.findMany({
+      where: { action: 'import_historical_calls' },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { user: { select: { name: true, email: true } } },
+    });
+  }
+
   async importFromExcel(buffer: Buffer, userId: string): Promise<ImportResult> {
     const workbook = new ExcelJS.Workbook();
     try {

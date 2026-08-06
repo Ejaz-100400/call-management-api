@@ -21,6 +21,11 @@ export class ImportController {
     res.send(buffer);
   }
 
+  @Get('calls/history')
+  history() {
+    return this.importService.history();
+  }
+
   @Post('calls')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
   async importCalls(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: User) {

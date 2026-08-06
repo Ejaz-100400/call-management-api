@@ -27,6 +27,16 @@ export class ExportController {
     res.send(buffer);
   }
 
+  @Get('history')
+  history() {
+    return this.prisma.auditLog.findMany({
+      where: { action: 'export_report' },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { user: { select: { name: true, email: true } } },
+    });
+  }
+
   @Get('calls.pdf')
   async exportPdf(@Query() query: QueryCallsDto, @CurrentUser() user: User, @Res() res: Response) {
     const buffer = await this.exportService.generatePdf(query);
