@@ -43,7 +43,7 @@ export class CallsService {
     const [items, total] = await Promise.all([
       this.prisma.call.findMany({
         where,
-        include: { customer: true, employee: true, extraction: true },
+        include: { customer: true, employee: true, extraction: true, importedBy: { select: { name: true, email: true } } },
         orderBy: { callDate: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -63,6 +63,7 @@ export class CallsService {
         extraction: true,
         transcript: true,
         products: { include: { product: true } },
+        importedBy: { select: { name: true, email: true } },
       },
     });
     if (!call) throw new NotFoundException(`Call ${id} not found`);

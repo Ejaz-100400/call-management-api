@@ -139,7 +139,7 @@ export class ImportService {
 
       try {
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
-        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed));
+        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
         result.imported++;
       } catch (err) {
         result.skipped++;
@@ -262,7 +262,7 @@ export class ImportService {
     };
   }
 
-  private async persistRow(tx: Prisma.TransactionClient, data: ParsedRow) {
+  private async persistRow(tx: Prisma.TransactionClient, data: ParsedRow, importedByUserId: string) {
     const customer = await tx.customer.upsert({
       where: { phoneNumber: data.phone },
       create: { phoneNumber: data.phone, name: data.customerName ?? null },
@@ -277,6 +277,7 @@ export class ImportService {
         callDate: data.callDate,
         durationSeconds: data.duration,
         status: 'completed',
+        importedByUserId,
       },
     });
 
