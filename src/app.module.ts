@@ -12,6 +12,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { QueueModule } from './queue/queue.module';
 import { ReportsModule } from './reports/reports.module';
+import { TeamModule } from './team/team.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
@@ -28,6 +29,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ExportModule,
     ImportModule,
     BusinessNumbersModule,
+    TeamModule,
     WebhooksModule,
   ],
   controllers: [HealthController],
