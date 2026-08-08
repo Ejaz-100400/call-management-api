@@ -4,6 +4,7 @@ import { User } from '@prisma/client';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CommitPhotoRowsDto } from './dto/commit-photo-rows.dto';
+import { RecordImportHistoryDto } from './dto/record-import-history.dto';
 import { ImportService } from './import.service';
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -31,9 +32,9 @@ export class ImportController {
 
   @Post('calls')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
-  async importCalls(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: User) {
+  async parseCalls(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return this.importService.importFromExcel(file.buffer, user.id);
+    return this.importService.parseExcel(file.buffer);
   }
 
   @Post('photos/extract')
@@ -47,5 +48,16 @@ export class ImportController {
   async commitPhotoRows(@Body() dto: CommitPhotoRowsDto, @CurrentUser() user: User) {
     if (!dto.rows?.length) throw new BadRequestException('No rows to import');
     return this.importService.commitPhotoRows(dto.rows, user.id);
+  }
+
+  @Post('history')
+  async recordHistory(@Body() dto: RecordImportHistoryDto, @CurrentUser() user: User) {
+    await this.importService.recordImportHistory(
+      user.id,
+      dto.source,
+      { imported: dto.imported, skipped: dto.skipped, errors: dto.errors },
+      dto.rows.map((r) => ({ ...r, callDate: new Date(r.callDate) })),
+    );
+    return { recorded: true };
   }
 }

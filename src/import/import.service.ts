@@ -35,12 +35,42 @@ export interface ImportResult {
   errors: Array<{ row: number; reason: string }>;
 }
 
-interface ImportedRowSummary {
+export interface ImportedRowSummary {
   customerName?: string;
   phoneNumber: string;
   businessCategory: BusinessCategory;
   callDate: Date;
   location?: string;
+}
+
+export interface CommitRowsResult extends ImportResult {
+  importedRows: ImportedRowSummary[];
+}
+
+export interface ParsedExcelRow {
+  sourceRow: number;
+  phoneNumber: string;
+  businessCategory?: BusinessCategory;
+  callDate?: string;
+  customerName?: string;
+  employeeId?: string;
+  durationSeconds?: number;
+  carMake?: string;
+  carModel?: string;
+  carVariant?: string;
+  location?: string;
+  productsDiscussed?: string[];
+  customerRequirements?: string;
+  budget?: number;
+  followUpRequired?: boolean;
+  followUpDate?: string;
+  summary?: string;
+  sentiment?: SentimentType;
+}
+
+export interface ParseExcelResult {
+  rows: ParsedExcelRow[];
+  errors: Array<{ row: number; reason: string }>;
 }
 
 export interface PhotoExtractResult {
@@ -165,14 +195,15 @@ export class ImportService {
   }
 
   /**
-   * Persists rows the reviewer has already confirmed/edited in the UI --
-   * same underlying write path as the Excel import (persistRow), so photo-
-   * sourced historical data behaves identically to spreadsheet-sourced data
-   * everywhere else in the app (reports, product matching, etc.).
+   * Persists one batch of rows the caller has already confirmed/edited --
+   * same underlying write path regardless of source (photo-scan review or
+   * parsed Excel), so historical data behaves identically everywhere else
+   * in the app (reports, product matching, etc.). Does NOT write an audit
+   * log entry itself -- callers commit in batches (for progress feedback)
+   * and call recordImportHistory() once at the end with the totals.
    */
-  async commitPhotoRows(rows: CommitPhotoRowDto[], userId: string): Promise<ImportResult> {
-    const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
-    const imported: ImportedRowSummary[] = [];
+  async commitPhotoRows(rows: CommitPhotoRowDto[], userId: string): Promise<CommitRowsResult> {
+    const result: CommitRowsResult = { imported: 0, skipped: 0, errors: [], importedRows: [] };
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -203,7 +234,7 @@ export class ImportService {
         };
         await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
         result.imported++;
-        imported.push({
+        result.importedRows.push({
           customerName: parsed.customerName,
           phoneNumber: parsed.phone,
           businessCategory: parsed.category,
@@ -216,19 +247,35 @@ export class ImportService {
       }
     }
 
+    return result;
+  }
+
+  /**
+   * Writes the single audit log entry for a (possibly multi-batch) import,
+   * once the caller has committed every batch and aggregated the totals.
+   */
+  async recordImportHistory(
+    userId: string,
+    source: 'excel' | 'photo_ocr',
+    result: ImportResult,
+    importedRows: ImportedRowSummary[],
+  ) {
     await this.prisma.auditLog.create({
       data: {
         userId,
         action: 'import_historical_calls',
         entity: 'calls',
-        details: { ...result, source: 'photo_ocr', rows: imported } as unknown as object,
+        details: { ...result, source, rows: importedRows } as unknown as object,
       },
     });
-
-    return result;
   }
 
-  async importFromExcel(buffer: Buffer, userId: string): Promise<ImportResult> {
+  /**
+   * Parses an Excel file into rows ready for commitPhotoRows(), without
+   * persisting anything -- mirrors the photo-scan extract phase so both
+   * import paths share the same review-then-batch-commit flow.
+   */
+  async parseExcel(buffer: Buffer): Promise<ParseExcelResult> {
     const workbook = new ExcelJS.Workbook();
     try {
       await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
@@ -249,8 +296,8 @@ export class ImportService {
     const employeesByEmail = new Map(employees.filter((e) => e.email).map((e) => [e.email!.toLowerCase(), e.id]));
     const employeesByName = new Map(employees.map((e) => [e.name.toLowerCase(), e.id]));
 
-    const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
-    const imported: ImportedRowSummary[] = [];
+    const rows: ParsedExcelRow[] = [];
+    const errors: Array<{ row: number; reason: string }> = [];
     const lastRow = Math.min(sheet.rowCount, MAX_ROWS + 1);
 
     for (let rowNumber = 2; rowNumber <= lastRow; rowNumber++) {
@@ -259,38 +306,39 @@ export class ImportService {
 
       try {
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
-        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
-        result.imported++;
-        imported.push({
-          customerName: parsed.customerName,
+        rows.push({
+          sourceRow: rowNumber,
           phoneNumber: parsed.phone,
           businessCategory: parsed.category,
-          callDate: parsed.callDate,
+          callDate: parsed.callDate.toISOString(),
+          customerName: parsed.customerName,
+          employeeId: parsed.employeeId,
+          durationSeconds: parsed.duration,
+          carMake: parsed.carMake,
+          carModel: parsed.carModel,
+          carVariant: parsed.carVariant,
           location: parsed.location,
+          productsDiscussed: parsed.products,
+          customerRequirements: parsed.requirements,
+          budget: parsed.budget,
+          followUpRequired: parsed.followUpRequired,
+          followUpDate: parsed.followUpDate?.toISOString(),
+          summary: parsed.summary,
+          sentiment: parsed.sentiment,
         });
       } catch (err) {
-        result.skipped++;
-        result.errors.push({ row: rowNumber, reason: (err as Error).message });
+        errors.push({ row: rowNumber, reason: (err as Error).message });
       }
     }
 
     if (sheet.rowCount > MAX_ROWS + 1) {
-      result.errors.push({
+      errors.push({
         row: MAX_ROWS + 2,
         reason: `File has more than ${MAX_ROWS} data rows -- everything after row ${MAX_ROWS + 1} was not processed. Split the file and re-upload the rest.`,
       });
     }
 
-    await this.prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'import_historical_calls',
-        entity: 'calls',
-        details: { ...result, source: 'excel', rows: imported } as unknown as object,
-      },
-    });
-
-    return result;
+    return { rows, errors };
   }
 
   private buildColumnMap(headerRow: ExcelJS.Row): Map<string, number> {
