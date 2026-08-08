@@ -24,20 +24,31 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
   input_schema: {
     type: 'object',
     properties: {
-      customerName: { type: 'string', description: 'Omit if not mentioned' },
+      customerName: {
+        type: 'string',
+        description:
+          'Omit if not mentioned. If spoken/written in Tamil, Hindi, or another script, transliterate it ' +
+          'into English/Latin script (e.g. "Ramesh", not the Tamil or Devanagari spelling) -- this is ' +
+          'transliteration of the same name, not translation, so it stays accurate.',
+      },
       carMake: { type: 'string', description: 'e.g. Maruti, Hyundai. Omit if not mentioned' },
       carModel: { type: 'string', description: 'e.g. Swift, Creta. Omit if not mentioned' },
       carVariant: { type: 'string', description: 'e.g. VXI, SX(O). Omit if not mentioned' },
       productsDiscussed: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Products/services discussed, in the customer\'s or agent\'s own words',
+        description:
+          'Products/services discussed. Capture the actual meaning in the customer\'s or agent\'s own ' +
+          'words, written in English regardless of what language the call was conducted in.',
       },
-      customerRequirements: { type: 'string', description: 'Free-text summary of what the customer needs' },
+      customerRequirements: {
+        type: 'string',
+        description: 'Free-text summary of what the customer needs, written in English regardless of the call\'s language.',
+      },
       budget: { type: 'number', description: 'Only if a specific number was mentioned' },
       followUpRequired: { type: 'boolean' },
       followUpDate: { type: 'string', description: 'ISO 8601 date, only if a specific date was discussed' },
-      summary: { type: 'string', description: '2-3 sentence summary of the call' },
+      summary: { type: 'string', description: '2-3 sentence summary of the call, written in English regardless of the call\'s language.' },
       sentiment: { type: 'string', enum: ['interested', 'not_interested', 'needs_follow_up'] },
     },
     required: ['productsDiscussed', 'followUpRequired', 'summary', 'sentiment'],
@@ -54,7 +65,13 @@ export async function extractCallInfo(
     system:
       'You analyze customer service call transcripts for an automotive business. Extract the ' +
       'fields precisely from what was actually said in the transcript -- omit anything not ' +
-      'mentioned, do not guess or infer beyond what the transcript actually states.',
+      'mentioned, do not guess or infer beyond what the transcript actually states. Most calls ' +
+      'are conducted in Tamil, Hindi, or a mix of languages rather than English -- write every ' +
+      'free-text field (customerRequirements, productsDiscussed, summary) in English regardless ' +
+      'of what language the call itself was in. This means translating the meaning accurately, ' +
+      "not guessing content that wasn't actually said. Customer names should be transliterated " +
+      'into English/Latin script rather than translated (a name has no English equivalent, but it ' +
+      'can be written in Latin letters).',
     messages: [
       {
         role: 'user',
