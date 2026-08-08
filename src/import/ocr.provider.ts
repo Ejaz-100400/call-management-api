@@ -96,6 +96,85 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
   },
 };
 
+/**
+ * Backstop for carMake when Claude's own inference is inconsistent across a
+ * large batch -- deterministic lookup of common India-market model names to
+ * their manufacturer, checked as a substring against the extracted carModel.
+ * Sorted longest-keyword-first so "grand i10" wins over "i10", etc.
+ */
+const CAR_MODEL_TO_MAKE: Array<[string, string]> = [
+  // Maruti Suzuki
+  ['wagon r', 'Maruti Suzuki'], ['wagonr', 'Maruti Suzuki'], ['swift dzire', 'Maruti Suzuki'],
+  ['grand vitara', 'Maruti Suzuki'], ['vitara brezza', 'Maruti Suzuki'], ['s-presso', 'Maruti Suzuki'],
+  ['spresso', 'Maruti Suzuki'], ['zen estilo', 'Maruti Suzuki'], ['swift', 'Maruti Suzuki'], ['dzire', 'Maruti Suzuki'],
+  ['baleno', 'Maruti Suzuki'], ['alto', 'Maruti Suzuki'], ['celerio', 'Maruti Suzuki'], ['ertiga', 'Maruti Suzuki'],
+  ['ciaz', 'Maruti Suzuki'], ['ignis', 'Maruti Suzuki'], ['eeco', 'Maruti Suzuki'], ['omni', 'Maruti Suzuki'],
+  ['gypsy', 'Maruti Suzuki'], ['xl6', 'Maruti Suzuki'], ['fronx', 'Maruti Suzuki'], ['jimny', 'Maruti Suzuki'],
+  ['brezza', 'Maruti Suzuki'], ['ritz', 'Maruti Suzuki'], ['esteem', 'Maruti Suzuki'], ['a-star', 'Maruti Suzuki'],
+  // Hyundai
+  ['grand i10', 'Hyundai'], ['elite i20', 'Hyundai'], ['i10', 'Hyundai'], ['i20', 'Hyundai'], ['verna', 'Hyundai'],
+  ['creta', 'Hyundai'], ['venue', 'Hyundai'], ['santro', 'Hyundai'], ['aura', 'Hyundai'], ['xcent', 'Hyundai'],
+  ['eon', 'Hyundai'], ['tucson', 'Hyundai'], ['elantra', 'Hyundai'], ['kona', 'Hyundai'], ['alcazar', 'Hyundai'],
+  ['exter', 'Hyundai'],
+  // Tata
+  ['nano', 'Tata'], ['tiago', 'Tata'], ['tigor', 'Tata'], ['altroz', 'Tata'], ['punch', 'Tata'], ['nexon', 'Tata'],
+  ['harrier', 'Tata'], ['safari', 'Tata'], ['indica', 'Tata'], ['indigo', 'Tata'], ['zest', 'Tata'], ['bolt', 'Tata'],
+  ['hexa', 'Tata'], ['sumo', 'Tata'],
+  // Mahindra
+  ['xuv500', 'Mahindra'], ['xuv 500', 'Mahindra'], ['xuv300', 'Mahindra'], ['xuv 300', 'Mahindra'],
+  ['xuv700', 'Mahindra'], ['xuv 700', 'Mahindra'], ['scorpio', 'Mahindra'], ['bolero', 'Mahindra'],
+  ['thar', 'Mahindra'], ['kuv100', 'Mahindra'], ['kuv 100', 'Mahindra'], ['marazzo', 'Mahindra'],
+  ['tuv300', 'Mahindra'], ['tuv 300', 'Mahindra'], ['xylo', 'Mahindra'], ['verito', 'Mahindra'], ['quanto', 'Mahindra'],
+  // Honda
+  ['city', 'Honda'], ['amaze', 'Honda'], ['wr-v', 'Honda'], ['wrv', 'Honda'], ['jazz', 'Honda'], ['civic', 'Honda'],
+  ['brio', 'Honda'], ['mobilio', 'Honda'], ['br-v', 'Honda'], ['brv', 'Honda'], ['elevate', 'Honda'],
+  // Toyota
+  ['etios', 'Toyota'], ['innova', 'Toyota'], ['fortuner', 'Toyota'], ['corolla', 'Toyota'], ['glanza', 'Toyota'],
+  ['urban cruiser', 'Toyota'], ['camry', 'Toyota'], ['yaris', 'Toyota'], ['land cruiser', 'Toyota'],
+  ['hilux', 'Toyota'], ['rumion', 'Toyota'], ['hyryder', 'Toyota'],
+  // Ford
+  ['ecosport', 'Ford'], ['figo', 'Ford'], ['aspire', 'Ford'], ['endeavour', 'Ford'], ['fiesta', 'Ford'],
+  ['freestyle', 'Ford'],
+  // Renault
+  ['duster', 'Renault'], ['kwid', 'Renault'], ['triber', 'Renault'], ['kiger', 'Renault'], ['lodgy', 'Renault'],
+  ['captur', 'Renault'],
+  // Kia
+  ['seltos', 'Kia'], ['sonet', 'Kia'], ['carens', 'Kia'], ['carnival', 'Kia'], ['ev6', 'Kia'],
+  // Volkswagen
+  ['polo', 'Volkswagen'], ['vento', 'Volkswagen'], ['ameo', 'Volkswagen'], ['taigun', 'Volkswagen'],
+  ['virtus', 'Volkswagen'], ['tiguan', 'Volkswagen'], ['jetta', 'Volkswagen'],
+  // Skoda
+  ['rapid', 'Skoda'], ['slavia', 'Skoda'], ['kushaq', 'Skoda'], ['octavia', 'Skoda'], ['superb', 'Skoda'],
+  ['laura', 'Skoda'], ['fabia', 'Skoda'],
+  // Nissan
+  ['micra', 'Nissan'], ['sunny', 'Nissan'], ['terrano', 'Nissan'], ['kicks', 'Nissan'], ['magnite', 'Nissan'],
+  ['evalia', 'Nissan'],
+  // Chevrolet (discontinued in India but still common on the road)
+  ['beat', 'Chevrolet'], ['spark', 'Chevrolet'], ['cruze', 'Chevrolet'], ['sail', 'Chevrolet'], ['tavera', 'Chevrolet'],
+  ['enjoy', 'Chevrolet'],
+  // Datsun
+  ['redi-go', 'Datsun'], ['redigo', 'Datsun'], ['datsun go', 'Datsun'],
+  // Jeep
+  ['compass', 'Jeep'], ['meridian', 'Jeep'], ['wrangler', 'Jeep'],
+  // MG
+  ['hector', 'MG'], ['astor', 'MG'], ['gloster', 'MG'], ['comet', 'MG'],
+  // Isuzu
+  ['d-max', 'Isuzu'], ['mu-x', 'Isuzu'],
+  // Premium/luxury
+  ['3 series', 'BMW'], ['5 series', 'BMW'], ['x1', 'BMW'], ['x3', 'BMW'], ['x5', 'BMW'],
+  ['c-class', 'Mercedes-Benz'], ['e-class', 'Mercedes-Benz'], ['gla', 'Mercedes-Benz'], ['glc', 'Mercedes-Benz'],
+  ['a4', 'Audi'], ['a6', 'Audi'], ['q3', 'Audi'], ['q5', 'Audi'], ['q7', 'Audi'],
+];
+CAR_MODEL_TO_MAKE.sort((a, b) => b[0].length - a[0].length);
+
+function inferMakeFromModel(model: string): string | null {
+  const normalized = model.toLowerCase();
+  for (const [keyword, make] of CAR_MODEL_TO_MAKE) {
+    if (normalized.includes(keyword)) return make;
+  }
+  return null;
+}
+
 const SUPPORTED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 type SupportedMediaType = (typeof SUPPORTED_MEDIA_TYPES)[number];
 
@@ -160,7 +239,7 @@ export async function extractHandwrittenEntries(imageBuffer: Buffer, mediaType: 
     // pageDate is a required schema field but comes back as "" when genuinely absent from the photo.
     callDate: input.pageDate || e.callDate || null,
     employeeName: e.employeeName ?? null,
-    carMake: e.carMake ?? null,
+    carMake: e.carMake ?? (e.carModel ? inferMakeFromModel(e.carModel) : null),
     carModel: e.carModel ?? null,
     carVariant: e.carVariant ?? null,
     location: e.location ?? null,
