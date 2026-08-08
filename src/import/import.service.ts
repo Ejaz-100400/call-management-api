@@ -1,9 +1,13 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
+import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
+import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } from './ocr.provider';
 
 const MAX_ROWS = 1000;
+const MAX_PHOTOS = 30;
 const PRODUCT_MATCH_THRESHOLD = 0.25;
 
 interface ParsedRow {
@@ -29,6 +33,12 @@ export interface ImportResult {
   imported: number;
   skipped: number;
   errors: Array<{ row: number; reason: string }>;
+}
+
+export interface PhotoExtractResult {
+  sourceFile: string;
+  entries: ExtractedEntry[];
+  error?: string;
 }
 
 @Injectable()
@@ -105,6 +115,95 @@ export class ImportService {
       take: 50,
       include: { user: { select: { name: true, email: true } } },
     });
+  }
+
+  /**
+   * Reads photos of handwritten notes via Claude vision and returns the raw
+   * extraction for the caller to review/edit -- nothing is persisted here.
+   * A small concurrency limit keeps wall-clock time reasonable for a batch
+   * without hammering the Anthropic API.
+   */
+  async extractFromPhotos(files: Express.Multer.File[]): Promise<PhotoExtractResult[]> {
+    if (files.length > MAX_PHOTOS) {
+      throw new BadRequestException(`Up to ${MAX_PHOTOS} photos per batch -- split into multiple uploads.`);
+    }
+
+    const CONCURRENCY = 3;
+    const results: PhotoExtractResult[] = new Array(files.length);
+    let next = 0;
+
+    async function worker() {
+      while (next < files.length) {
+        const i = next++;
+        const file = files[i];
+        if (!isSupportedImageType(file.mimetype)) {
+          results[i] = { sourceFile: file.originalname, entries: [], error: `Unsupported file type (${file.mimetype})` };
+          continue;
+        }
+        try {
+          const entries = await extractHandwrittenEntries(file.buffer, file.mimetype);
+          results[i] = { sourceFile: file.originalname, entries };
+        } catch (err) {
+          results[i] = { sourceFile: file.originalname, entries: [], error: (err as Error).message };
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, () => worker()));
+    return results;
+  }
+
+  /**
+   * Persists rows the reviewer has already confirmed/edited in the UI --
+   * same underlying write path as the Excel import (persistRow), so photo-
+   * sourced historical data behaves identically to spreadsheet-sourced data
+   * everywhere else in the app (reports, product matching, etc.).
+   */
+  async commitPhotoRows(rows: CommitPhotoRowDto[], userId: string): Promise<ImportResult> {
+    const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        const parsed: ParsedRow = {
+          // A phone number couldn't always be read off a handwritten note --
+          // still capture the call itself rather than dropping it, with an
+          // obviously-synthetic phone so it's never mistaken for a real one.
+          phone: row.phoneNumber?.trim() || `unknown-${randomUUID()}`,
+          category: row.businessCategory,
+          callDate: new Date(row.callDate),
+          customerName: row.customerName?.trim() || undefined,
+          employeeId: row.employeeId,
+          duration: row.durationSeconds ?? 0,
+          carMake: row.carMake?.trim() || undefined,
+          carModel: row.carModel?.trim() || undefined,
+          carVariant: row.carVariant?.trim() || undefined,
+          products: (row.productsDiscussed ?? []).map((p) => p.trim()).filter(Boolean),
+          requirements: row.customerRequirements?.trim() || undefined,
+          budget: row.budget,
+          followUpRequired: row.followUpRequired ?? false,
+          followUpDate: row.followUpDate ? new Date(row.followUpDate) : undefined,
+          summary: row.summary?.trim() || undefined,
+          sentiment: row.sentiment,
+        };
+        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
+        result.imported++;
+      } catch (err) {
+        result.skipped++;
+        result.errors.push({ row: i + 1, reason: (err as Error).message });
+      }
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'import_historical_calls',
+        entity: 'calls',
+        details: { ...result, source: 'photo_ocr' } as unknown as object,
+      },
+    });
+
+    return result;
   }
 
   async importFromExcel(buffer: Buffer, userId: string): Promise<ImportResult> {
