@@ -15,8 +15,8 @@ export class QueryCallsDto {
   carModel?: string;
 
   @IsOptional()
-  @IsIn(['car_glasses', 'car_modifications'])
-  category?: 'car_glasses' | 'car_modifications';
+  @IsIn(['car_glasses', 'car_modifications', 'unknown'])
+  category?: 'car_glasses' | 'car_modifications' | 'unknown';
 
   @IsOptional()
   @IsDateString()

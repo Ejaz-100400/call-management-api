@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsDateString,
   IsIn,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -14,15 +15,17 @@ import {
 import { BusinessCategory, SentimentType } from '@prisma/client';
 
 export class CommitPhotoRowDto {
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  phoneNumber?: string;
+  phoneNumber: string;
 
-  @IsIn(['car_glasses', 'car_modifications'])
-  businessCategory: BusinessCategory;
+  @IsOptional()
+  @IsIn(['car_glasses', 'car_modifications', 'unknown'])
+  businessCategory?: BusinessCategory;
 
+  @IsOptional()
   @IsDateString()
-  callDate: string;
+  callDate?: string;
 
   @IsOptional()
   @IsString()

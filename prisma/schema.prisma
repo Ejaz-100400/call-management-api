@@ -683,6 +683,7 @@ model webauthn_credentials {
 enum BusinessCategory {
   car_glasses
   car_modifications
+  unknown
 
   @@map("business_category")
   @@schema("public")

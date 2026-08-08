@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
 import ExcelJS from 'exceljs';
@@ -50,8 +49,8 @@ export class ImportService {
     const sheet = workbook.addWorksheet('Calls');
 
     sheet.columns = [
-      { header: 'Call Date*', key: 'callDate', width: 20 },
-      { header: 'Business Category*', key: 'businessCategory', width: 20 },
+      { header: 'Call Date', key: 'callDate', width: 20 },
+      { header: 'Business Category', key: 'businessCategory', width: 20 },
       { header: 'Phone Number*', key: 'phoneNumber', width: 16 },
       { header: 'Customer Name', key: 'customerName', width: 22 },
       { header: 'Employee (name or email)', key: 'employee', width: 24 },
@@ -94,8 +93,8 @@ export class ImportService {
     ];
     notes.getRow(1).font = { bold: true };
     notes.addRows([
-      { field: 'Call Date*', notes: 'Required. Any recognizable date/time format, e.g. 2024-05-10 14:30 or 05/10/2024.' },
-      { field: 'Business Category*', notes: 'Required. Must be "Car Glasses" or "Car Modifications".' },
+      { field: 'Call Date', notes: 'Any recognizable date/time format, e.g. 2024-05-10 14:30 or 05/10/2024. Leave blank if unknown -- defaults to the import date.' },
+      { field: 'Business Category', notes: '"Car Glasses" or "Car Modifications". Leave blank if unknown -- saved as "Unknown".' },
       { field: 'Phone Number*', notes: 'Required. Used to match an existing customer or create a new one.' },
       { field: 'Employee', notes: 'Matched by exact name or email against your Employees list. Leave blank if unknown -- the row still imports.' },
       { field: 'Products Discussed', notes: 'Comma-separated. Matched against your product catalog automatically, the same way live AI-processed calls are.' },
@@ -166,12 +165,14 @@ export class ImportService {
       const row = rows[i];
       try {
         const parsed: ParsedRow = {
-          // A phone number couldn't always be read off a handwritten note --
-          // still capture the call itself rather than dropping it, with an
-          // obviously-synthetic phone so it's never mistaken for a real one.
-          phone: row.phoneNumber?.trim() || `unknown-${randomUUID()}`,
-          category: row.businessCategory,
-          callDate: new Date(row.callDate),
+          // Phone number is the only field that must be filled in by the
+          // reviewer -- the DTO already validates it's non-empty here.
+          phone: row.phoneNumber.trim(),
+          // Category and call date are frequently unrecoverable from messy
+          // historical notes -- fall back to "unknown" / the import date
+          // rather than blocking the row from being saved at all.
+          category: row.businessCategory ?? 'unknown',
+          callDate: row.callDate ? new Date(row.callDate) : new Date(),
           customerName: row.customerName?.trim() || undefined,
           employeeId: row.employeeId,
           duration: row.durationSeconds ?? 0,
@@ -219,10 +220,8 @@ export class ImportService {
 
     const columnMap = this.buildColumnMap(sheet.getRow(1));
     const cols = this.resolveColumns(columnMap);
-    if (!cols.phone || !cols.category || !cols.callDate) {
-      throw new BadRequestException(
-        'Could not find the required columns (Call Date, Business Category, Phone Number). Please use the provided template.',
-      );
+    if (!cols.phone) {
+      throw new BadRequestException('Could not find the required Phone Number column. Please use the provided template.');
     }
 
     const employees = await this.prisma.employee.findMany({ where: { active: true } });
@@ -317,11 +316,10 @@ export class ImportService {
     const phone = this.cellText(row.getCell(cols.phone!).value);
     if (!phone) throw new Error('Missing phone number');
 
-    const callDate = this.parseDate(row.getCell(cols.callDate!).value);
-    if (!callDate) throw new Error('Missing or invalid call date');
-
-    const category = this.parseCategory(this.cellText(row.getCell(cols.category!).value));
-    if (!category) throw new Error('Missing or invalid business category (expected "Car Glasses" or "Car Modifications")');
+    // Category and call date are frequently unrecoverable from messy
+    // historical records -- default rather than skip the row over them.
+    const callDate = this.parseDate(row.getCell(cols.callDate!).value) ?? new Date();
+    const category = this.parseCategory(this.cellText(row.getCell(cols.category!).value)) ?? 'unknown';
 
     const employeeRaw = cols.employee ? this.cellText(row.getCell(cols.employee).value) : '';
     const employeeId = employeeRaw
