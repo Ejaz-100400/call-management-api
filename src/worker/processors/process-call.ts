@@ -1,5 +1,6 @@
 import { PrismaClient, type BusinessCategory } from '@prisma/client';
 import type { CallProcessingJob } from '../../queue/queue.service';
+import { defaultFollowUpDueDate } from '../../follow-ups/follow-up.util';
 import { extractCallInfo } from '../providers/ai.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
 import { transcribeAudio } from '../providers/stt.provider';
@@ -99,13 +100,12 @@ async function fullReprocess(callId: string, recordingUrl?: string) {
 
     await backfillCustomerName(call.customerId, extraction.customerName);
 
-    if (extraction.followUpRequired && extraction.followUpDate) {
+    if (extraction.followUpRequired) {
+      // Callers often say "call me back" without a specific date -- default
+      // rather than silently never creating the task.
+      const dueDate = extraction.followUpDate ? new Date(extraction.followUpDate) : defaultFollowUpDueDate();
       await prisma.followUp.create({
-        data: {
-          callId,
-          dueDate: new Date(extraction.followUpDate),
-          assignedTo: call.employeeId,
-        },
+        data: { callId, dueDate, assignedTo: call.employeeId },
       });
     }
 

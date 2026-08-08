@@ -3,6 +3,7 @@ import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
+import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
 import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } from './ocr.provider';
 
 const MAX_ROWS = 1000;
@@ -479,9 +480,13 @@ export class ImportService {
       },
     });
 
-    if (data.followUpRequired && data.followUpDate) {
+    if (data.followUpRequired) {
+      // A row can be flagged as needing follow-up without a specific date attached
+      // (common when reviewing messy historical notes) -- default rather than
+      // silently never creating the task, which is invisible on the Follow-ups page.
+      const dueDate = data.followUpDate ?? defaultFollowUpDueDate();
       await tx.followUp.create({
-        data: { callId: call.id, dueDate: data.followUpDate, assignedTo: data.employeeId },
+        data: { callId: call.id, dueDate, assignedTo: data.employeeId },
       });
     }
 

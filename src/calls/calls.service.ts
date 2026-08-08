@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { getSignedRecordingUrl } from '../worker/providers/storage.provider';
@@ -94,6 +95,13 @@ export class CallsService {
       },
     });
 
+    // The Follow-ups page reads from the separate FollowUp table, not this
+    // flag directly -- keep the two in sync whenever the flag/date changes,
+    // the same way the live pipeline and historical import already do.
+    if (dto.followUpRequired !== undefined || dto.followUpDate !== undefined) {
+      await this.syncFollowUp(callId, updated.followUpRequired, updated.followUpDate);
+    }
+
     await this.prisma.auditLog.create({
       data: {
         userId: editedById,
@@ -105,6 +113,30 @@ export class CallsService {
     });
 
     return updated;
+  }
+
+  private async syncFollowUp(callId: string, followUpRequired: boolean, followUpDate: Date | null) {
+    const existingFollowUp = await this.prisma.followUp.findFirst({ where: { callId } });
+
+    if (followUpRequired) {
+      // No specific date given -- default rather than silently never
+      // creating the task, which is invisible on the Follow-ups page.
+      const dueDate = followUpDate ?? defaultFollowUpDueDate();
+      if (existingFollowUp) {
+        if (existingFollowUp.dueDate.getTime() !== dueDate.getTime()) {
+          await this.prisma.followUp.update({ where: { id: existingFollowUp.id }, data: { dueDate } });
+        }
+      } else {
+        const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { employeeId: true } });
+        await this.prisma.followUp.create({
+          data: { callId, dueDate, assignedTo: call?.employeeId },
+        });
+      }
+    } else if (existingFollowUp && existingFollowUp.status === 'pending') {
+      // Follow-up was unflagged before anyone acted on it -- remove it rather
+      // than leaving a stale pending task with no due date to work from.
+      await this.prisma.followUp.delete({ where: { id: existingFollowUp.id } });
+    }
   }
 
   async updateCall(id: string, dto: UpdateCallDto, editedById: string) {
