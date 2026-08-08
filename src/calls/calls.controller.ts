@@ -4,6 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CallsService } from './calls.service';
 import { QueryCallsDto } from './dto/query-calls.dto';
+import { UpdateCallDto } from './dto/update-call.dto';
 import { UpdateExtractionDto } from './dto/update-extraction.dto';
 
 @Controller('calls')
@@ -24,6 +25,12 @@ export class CallsController {
   @Get(':id/recording')
   getRecording(@Param('id', ParseUUIDPipe) id: string) {
     return this.callsService.getRecordingUrl(id);
+  }
+
+  @Patch(':id')
+  @Roles('admin')
+  updateCall(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCallDto, @CurrentUser() user: User) {
+    return this.callsService.updateCall(id, dto, user.id);
   }
 
   @Patch(':id/extraction')

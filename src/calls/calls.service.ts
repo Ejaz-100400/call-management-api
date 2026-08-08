@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { getSignedRecordingUrl } from '../worker/providers/storage.provider';
 import { QueryCallsDto } from './dto/query-calls.dto';
+import { UpdateCallDto } from './dto/update-call.dto';
 import { UpdateExtractionDto } from './dto/update-extraction.dto';
 
 @Injectable()
@@ -99,6 +100,32 @@ export class CallsService {
         action: 'edit_extraction',
         entity: 'call_extractions',
         entityId: updated.id,
+        details: dto as Prisma.InputJsonValue,
+      },
+    });
+
+    return updated;
+  }
+
+  async updateCall(id: string, dto: UpdateCallDto, editedById: string) {
+    await this.findOne(id);
+
+    const updated = await this.prisma.call.update({
+      where: { id },
+      data: {
+        businessCategory: dto.businessCategory,
+        callDate: dto.callDate ? new Date(dto.callDate) : undefined,
+        employeeId: dto.employeeId !== undefined ? dto.employeeId || null : undefined,
+      },
+      include: { customer: true, employee: true, extraction: true },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId: editedById,
+        action: 'edit_call',
+        entity: 'calls',
+        entityId: id,
         details: dto as Prisma.InputJsonValue,
       },
     });

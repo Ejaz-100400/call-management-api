@@ -31,7 +31,7 @@ export class CustomersController {
   }
 
   @Patch(':id')
-  @Roles('admin', 'manager')
+  @Roles('admin')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto) {
     return this.customersService.update(id, dto);
   }
