@@ -81,6 +81,7 @@ export class CallsService {
         carMake: dto.carMake,
         carModel: dto.carModel,
         carVariant: dto.carVariant,
+        location: dto.location,
         customerRequirements: dto.customerRequirements,
         budget: dto.budget,
         followUpRequired: dto.followUpRequired,

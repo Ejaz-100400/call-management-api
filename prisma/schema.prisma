@@ -113,6 +113,7 @@ model CallExtraction {
   carMake              String?           @map("car_make")
   carModel             String?           @map("car_model")
   carVariant           String?           @map("car_variant")
+  location             String?
   productsDiscussed    Json              @default("[]") @map("products_discussed")
   customerRequirements String?           @map("customer_requirements")
   budget               Decimal?          @db.Decimal(12, 2)

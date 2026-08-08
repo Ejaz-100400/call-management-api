@@ -5,6 +5,7 @@ export class UpdateExtractionDto {
   @IsOptional() @IsString() carMake?: string;
   @IsOptional() @IsString() carModel?: string;
   @IsOptional() @IsString() carVariant?: string;
+  @IsOptional() @IsString() location?: string;
   @IsOptional() @IsString() customerRequirements?: string;
   @IsOptional() @IsNumber() budget?: number;
   @IsOptional() @IsBoolean() followUpRequired?: boolean;

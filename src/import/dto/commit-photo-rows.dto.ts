@@ -52,6 +52,10 @@ export class CommitPhotoRowDto {
   carVariant?: string;
 
   @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
   productsDiscussed?: string[];

@@ -11,6 +11,7 @@ export interface ExtractedEntry {
   carMake: string | null;
   carModel: string | null;
   carVariant: string | null;
+  location: string | null;
   productsDiscussed: string[];
   customerRequirements: string | null;
   budget: number | null;
@@ -64,6 +65,14 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
             },
             carModel: { type: 'string', description: 'The vehicle model as written (or read from context), separate from the make.' },
             carVariant: { type: 'string' },
+            location: {
+              type: 'string',
+              description:
+                'The area, shop, or place associated with this entry, if a ledger column or note gives one ' +
+                '(e.g. a neighborhood/city name, or a partner shop like "SP shop" or "Ambattur"). This is a ' +
+                'distinct field from customerRequirements -- do not fold it into that field. Omit if no ' +
+                'location is written for this entry.',
+            },
             productsDiscussed: { type: 'array', items: { type: 'string' }, description: 'Products/services mentioned, in the note\'s own words' },
             customerRequirements: { type: 'string', description: 'Free-text summary of what the customer needs' },
             budget: { type: 'number', description: 'Only if a specific number is written' },
@@ -154,6 +163,7 @@ export async function extractHandwrittenEntries(imageBuffer: Buffer, mediaType: 
     carMake: e.carMake ?? null,
     carModel: e.carModel ?? null,
     carVariant: e.carVariant ?? null,
+    location: e.location ?? null,
     productsDiscussed: e.productsDiscussed ?? [],
     customerRequirements: e.customerRequirements ?? null,
     budget: e.budget ?? null,

@@ -19,6 +19,7 @@ interface ParsedRow {
   carMake?: string;
   carModel?: string;
   carVariant?: string;
+  location?: string;
   products: string[];
   requirements?: string;
   budget?: number;
@@ -32,6 +33,14 @@ export interface ImportResult {
   imported: number;
   skipped: number;
   errors: Array<{ row: number; reason: string }>;
+}
+
+interface ImportedRowSummary {
+  customerName?: string;
+  phoneNumber: string;
+  businessCategory: BusinessCategory;
+  callDate: Date;
+  location?: string;
 }
 
 export interface PhotoExtractResult {
@@ -58,6 +67,7 @@ export class ImportService {
       { header: 'Car Make', key: 'carMake', width: 14 },
       { header: 'Car Model', key: 'carModel', width: 14 },
       { header: 'Car Variant', key: 'carVariant', width: 14 },
+      { header: 'Location', key: 'location', width: 18 },
       { header: 'Products Discussed (comma-separated)', key: 'products', width: 36 },
       { header: 'Customer Requirements', key: 'requirements', width: 30 },
       { header: 'Budget', key: 'budget', width: 12 },
@@ -77,6 +87,7 @@ export class ImportService {
       carMake: 'Maruti',
       carModel: 'Swift',
       carVariant: 'VXI',
+      location: 'Ambattur',
       products: 'Windshield replacement, Tinting',
       requirements: 'Cracked windshield, wants same-day fitting',
       budget: 8000,
@@ -97,6 +108,7 @@ export class ImportService {
       { field: 'Business Category', notes: '"Car Glasses" or "Car Modifications". Leave blank if unknown -- saved as "Unknown".' },
       { field: 'Phone Number*', notes: 'Required. Used to match an existing customer or create a new one.' },
       { field: 'Employee', notes: 'Matched by exact name or email against your Employees list. Leave blank if unknown -- the row still imports.' },
+      { field: 'Location', notes: 'Free text -- the area, shop, or place associated with this call, if you track one.' },
       { field: 'Products Discussed', notes: 'Comma-separated. Matched against your product catalog automatically, the same way live AI-processed calls are.' },
       { field: 'Follow-up Required', notes: 'Yes/No. If Yes and a Follow-up Date is set, a follow-up task is created and assigned to the matched employee.' },
       { field: 'Sentiment', notes: 'One of: Interested, Not Interested, Needs Follow-up. Leave blank if unknown.' },
@@ -160,6 +172,7 @@ export class ImportService {
    */
   async commitPhotoRows(rows: CommitPhotoRowDto[], userId: string): Promise<ImportResult> {
     const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
+    const imported: ImportedRowSummary[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -179,6 +192,7 @@ export class ImportService {
           carMake: row.carMake?.trim() || undefined,
           carModel: row.carModel?.trim() || undefined,
           carVariant: row.carVariant?.trim() || undefined,
+          location: row.location?.trim() || undefined,
           products: (row.productsDiscussed ?? []).map((p) => p.trim()).filter(Boolean),
           requirements: row.customerRequirements?.trim() || undefined,
           budget: row.budget,
@@ -189,6 +203,13 @@ export class ImportService {
         };
         await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
         result.imported++;
+        imported.push({
+          customerName: parsed.customerName,
+          phoneNumber: parsed.phone,
+          businessCategory: parsed.category,
+          callDate: parsed.callDate,
+          location: parsed.location,
+        });
       } catch (err) {
         result.skipped++;
         result.errors.push({ row: i + 1, reason: (err as Error).message });
@@ -200,7 +221,7 @@ export class ImportService {
         userId,
         action: 'import_historical_calls',
         entity: 'calls',
-        details: { ...result, source: 'photo_ocr' } as unknown as object,
+        details: { ...result, source: 'photo_ocr', rows: imported } as unknown as object,
       },
     });
 
@@ -229,6 +250,7 @@ export class ImportService {
     const employeesByName = new Map(employees.map((e) => [e.name.toLowerCase(), e.id]));
 
     const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
+    const imported: ImportedRowSummary[] = [];
     const lastRow = Math.min(sheet.rowCount, MAX_ROWS + 1);
 
     for (let rowNumber = 2; rowNumber <= lastRow; rowNumber++) {
@@ -239,6 +261,13 @@ export class ImportService {
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
         await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
         result.imported++;
+        imported.push({
+          customerName: parsed.customerName,
+          phoneNumber: parsed.phone,
+          businessCategory: parsed.category,
+          callDate: parsed.callDate,
+          location: parsed.location,
+        });
       } catch (err) {
         result.skipped++;
         result.errors.push({ row: rowNumber, reason: (err as Error).message });
@@ -257,7 +286,7 @@ export class ImportService {
         userId,
         action: 'import_historical_calls',
         entity: 'calls',
-        details: result as unknown as object,
+        details: { ...result, source: 'excel', rows: imported } as unknown as object,
       },
     });
 
@@ -290,6 +319,7 @@ export class ImportService {
       carMake: find('make'),
       carModel: find('model'),
       carVariant: find('variant'),
+      location: find('location'),
       products: find('product'),
       requirements: find('requirement'),
       budget: find('budget'),
@@ -349,6 +379,7 @@ export class ImportService {
       carMake: cols.carMake ? this.cellText(row.getCell(cols.carMake).value) || undefined : undefined,
       carModel: cols.carModel ? this.cellText(row.getCell(cols.carModel).value) || undefined : undefined,
       carVariant: cols.carVariant ? this.cellText(row.getCell(cols.carVariant).value) || undefined : undefined,
+      location: cols.location ? this.cellText(row.getCell(cols.location).value) || undefined : undefined,
       products,
       requirements: cols.requirements ? this.cellText(row.getCell(cols.requirements).value) || undefined : undefined,
       budget: budget != null && !Number.isNaN(budget) ? budget : undefined,
@@ -387,6 +418,7 @@ export class ImportService {
         carMake: data.carMake,
         carModel: data.carModel,
         carVariant: data.carVariant,
+        location: data.location,
         productsDiscussed: data.products,
         customerRequirements: data.requirements,
         budget: data.budget,
