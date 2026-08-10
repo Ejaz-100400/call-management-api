@@ -75,9 +75,17 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
                 '"Creta"), infer the make from that model using your general knowledge of car brands ' +
                 '(e.g. Seltos -> Kia, Swift -> Maruti Suzuki, Creta -> Hyundai) -- this is applying general ' +
                 'knowledge, not inventing information, so it is fine even though the make itself was not ' +
-                'literally written. Omit only if the model is not recognizable at all.',
+                'literally written. Correct illegible/misspelled handwriting to the real manufacturer\'s ' +
+                'official spelling and capitalization. Omit only if the model is not recognizable at all.',
             },
-            carModel: { type: 'string', description: 'The vehicle model as written (or read from context), separate from the make.' },
+            carModel: {
+              type: 'string',
+              description:
+                'The vehicle model, read from the handwriting or inferred from context, separate from the ' +
+                'make. Correct illegible/misspelled handwriting to the real model\'s official spelling and ' +
+                'capitalization, including the manufacturer\'s own unusual casing (e.g. "EcoSport" not ' +
+                '"Ecosport", "320d" stays lowercase "d" for BMW\'s diesel naming).',
+            },
             carVariant: { type: 'string' },
             location: {
               type: 'string',

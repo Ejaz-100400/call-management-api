@@ -128,6 +128,47 @@ export class ImportService {
       sentiment: 'Interested',
     });
 
+    // Dropdowns for the columns with a fixed/known set of valid values --
+    // cuts down on the typos/casing drift free-text entry invites (this is
+    // the same problem normalizeVehicleField() cleans up after the fact,
+    // but stopping it at entry time is better). ExcelJS's typings don't
+    // expose the range-based Worksheet#dataValidations helper even though
+    // it exists at runtime, so this sets it per-cell via the documented API.
+    const LAST_ROW = MAX_ROWS + 1;
+    const applyListValidation = (
+      targetSheet: ExcelJS.Worksheet,
+      column: string,
+      formula: string,
+      errorMessage: string,
+    ) => {
+      for (let row = 2; row <= LAST_ROW; row++) {
+        targetSheet.getCell(`${column}${row}`).dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [formula],
+          showErrorMessage: true,
+          errorStyle: 'warning',
+          error: errorMessage,
+        };
+      }
+    };
+
+    applyListValidation(sheet, 'B', '"Car Glasses,Car Modifications"', 'Pick from the list, or leave blank if unknown.');
+    applyListValidation(sheet, 'Q', '"Interested,Not Interested,Needs Follow-up"', 'Pick from the list, or leave blank if unknown.');
+
+    // Employee names are per-business data, not a fixed set -- list them on
+    // a hidden helper sheet and point the dropdown at that range, the same
+    // way Excel handles any dynamic list.
+    const activeEmployees = await this.prisma.employee.findMany({ where: { active: true }, orderBy: { name: 'asc' } });
+    if (activeEmployees.length > 0) {
+      const lists = workbook.addWorksheet('Lists', { state: 'hidden' });
+      lists.getCell('A1').value = 'Employees';
+      activeEmployees.forEach((emp, i) => {
+        lists.getCell(`A${i + 2}`).value = emp.name;
+      });
+      applyListValidation(sheet, 'E', `Lists!$A$2:$A$${activeEmployees.length + 1}`, 'Pick from the list, or leave blank if unassigned.');
+    }
+
     const notes = workbook.addWorksheet('Instructions');
     notes.columns = [
       { header: 'Field', key: 'field', width: 26 },
@@ -458,14 +499,19 @@ export class ImportService {
       },
     });
 
+    const [carMake, carModel] = await Promise.all([
+      data.carMake ? this.normalizeVehicleField(tx, 'car_make', data.carMake) : undefined,
+      data.carModel ? this.normalizeVehicleField(tx, 'car_model', data.carModel) : undefined,
+    ]);
+
     await tx.callExtraction.create({
       data: {
         callId: call.id,
         customerName: data.customerName,
         phoneNumber: data.phone,
         businessCategory: data.category,
-        carMake: data.carMake,
-        carModel: data.carModel,
+        carMake,
+        carModel,
         carVariant: data.carVariant,
         location: data.location,
         productsDiscussed: data.products,
@@ -493,6 +539,34 @@ export class ImportService {
     if (data.products.length > 0) {
       await this.linkDiscussedProducts(tx, call.id, data.category, data.products);
     }
+  }
+
+  /**
+   * Excel/manual-entry rows are hand-typed, so "ford" vs "Ford" or a stray
+   * trailing character creep in easily -- snap to an existing value already
+   * on record when it's a near-exact match (case/typo only), so the same
+   * car doesn't fragment into multiple spellings across imports. Live calls
+   * and photo-scan OCR get this from the AI prompt instead, since Claude can
+   * correct spelling even the very first time a model is ever seen.
+   */
+  private async normalizeVehicleField(
+    tx: Prisma.TransactionClient,
+    column: 'car_make' | 'car_model',
+    raw: string,
+  ): Promise<string> {
+    const cleaned = raw.trim().replace(/[`'"]+$/g, '').trim();
+    if (!cleaned) return cleaned;
+
+    const [best] = await tx.$queryRaw<Array<{ value: string; similarity: number }>>(Prisma.sql`
+      SELECT value, similarity(value, ${cleaned}) AS similarity
+      FROM (SELECT DISTINCT ${Prisma.raw(column)} AS value FROM call_extractions WHERE ${Prisma.raw(column)} IS NOT NULL) t
+      ORDER BY similarity DESC
+      LIMIT 1;
+    `);
+    // High threshold -- only fixes near-identical spelling/casing (e.g.
+    // "ford" -> "Ford"), never merges genuinely different names.
+    const VEHICLE_MATCH_THRESHOLD = 0.6;
+    return best && best.similarity >= VEHICLE_MATCH_THRESHOLD ? best.value : cleaned;
   }
 
   /**

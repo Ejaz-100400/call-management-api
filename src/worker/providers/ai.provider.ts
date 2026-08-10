@@ -31,8 +31,20 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
           'into English/Latin script (e.g. "Ramesh", not the Tamil or Devanagari spelling) -- this is ' +
           'transliteration of the same name, not translation, so it stays accurate.',
       },
-      carMake: { type: 'string', description: 'e.g. Maruti, Hyundai. Omit if not mentioned' },
-      carModel: { type: 'string', description: 'e.g. Swift, Creta. Omit if not mentioned' },
+      carMake: {
+        type: 'string',
+        description:
+          'e.g. Maruti, Hyundai. Correct misheard/misspelled brand names to the real manufacturer\'s ' +
+          'official spelling and capitalization (e.g. "Maruti Suzuki" not "maruti suzuki" or "maruthi"). ' +
+          'Omit if not mentioned.',
+      },
+      carModel: {
+        type: 'string',
+        description:
+          'e.g. Swift, Creta, EcoSport, 320d. Correct misheard/misspelled model names to the real model\'s ' +
+          'official spelling and capitalization, including the manufacturer\'s own unusual casing (e.g. ' +
+          '"EcoSport" not "Ecosport", "320d" stays lowercase "d" for BMW\'s diesel naming). Omit if not mentioned.',
+      },
       carVariant: { type: 'string', description: 'e.g. VXI, SX(O). Omit if not mentioned' },
       productsDiscussed: {
         type: 'array',
