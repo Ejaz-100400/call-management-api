@@ -8,8 +8,14 @@ import { QueryReportsDto } from './dto/query-reports.dto';
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
-  /** Shared category/employee/date-range filter, applied consistently across every report. */
+  /** Shared category/employee/date-range/vehicle/sentiment filter, applied consistently across every report. */
   private buildCallWhere(filters: QueryReportsDto): Prisma.CallWhereInput {
+    const extractionFilter: Prisma.CallExtractionWhereInput = {
+      ...(filters.carMake && { carMake: { contains: filters.carMake, mode: 'insensitive' } }),
+      ...(filters.carModel && { carModel: { contains: filters.carModel, mode: 'insensitive' } }),
+      ...(filters.sentiment && { sentiment: filters.sentiment }),
+    };
+
     return {
       ...(filters.category && { businessCategory: filters.category }),
       ...(filters.employeeId && { employeeId: filters.employeeId }),
@@ -19,17 +25,32 @@ export class ReportsService {
           ...(filters.dateTo && { lt: endOfDayIST(filters.dateTo) }),
         },
       }),
+      ...(Object.keys(extractionFilter).length > 0 && { extraction: extractionFilter }),
     };
   }
 
-  /** Same filter, as SQL fragments for the raw queries that need a table alias (c for calls). */
-  private buildCallConditions(filters: QueryReportsDto, alias = 'c'): Prisma.Sql[] {
+  /**
+   * Same filter, as SQL fragments for the raw queries. `callAlias` is required
+   * (every query has a calls table/alias); `extractionAlias` is only passed
+   * when the query already joins call_extractions -- car make/model/sentiment
+   * are extraction-scoped and can't be filtered without that join.
+   */
+  private buildCallConditions(filters: QueryReportsDto, callAlias: string, extractionAlias?: string): Prisma.Sql[] {
     const conditions: Prisma.Sql[] = [];
-    if (filters.category) conditions.push(Prisma.sql`${Prisma.raw(alias)}.business_category = ${filters.category}::business_category`);
-    if (filters.employeeId) conditions.push(Prisma.sql`${Prisma.raw(alias)}.employee_id = ${filters.employeeId}::uuid`);
-    if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(alias)}.call_date >= ${startOfDayIST(filters.dateFrom)}`);
-    if (filters.dateTo) conditions.push(Prisma.sql`${Prisma.raw(alias)}.call_date < ${endOfDayIST(filters.dateTo)}`);
+    if (filters.category) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.business_category = ${filters.category}::business_category`);
+    if (filters.employeeId) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.employee_id = ${filters.employeeId}::uuid`);
+    if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date >= ${startOfDayIST(filters.dateFrom)}`);
+    if (filters.dateTo) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date < ${endOfDayIST(filters.dateTo)}`);
+    if (extractionAlias) {
+      if (filters.carMake) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_make ILIKE ${'%' + filters.carMake + '%'}`);
+      if (filters.carModel) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_model ILIKE ${'%' + filters.carModel + '%'}`);
+      if (filters.sentiment) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.sentiment = ${filters.sentiment}::sentiment_type`);
+    }
     return conditions;
+  }
+
+  private needsExtractionJoin(filters: QueryReportsDto): boolean {
+    return Boolean(filters.carMake || filters.carModel || filters.sentiment);
   }
 
   async summary(filters: QueryReportsDto) {
@@ -44,6 +65,7 @@ export class ReportsService {
       durationAgg,
       budgetAgg,
       sentimentCounts,
+      distinctCustomers,
     ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
@@ -54,10 +76,13 @@ export class ReportsService {
       this.prisma.call.aggregate({ where: base, _avg: { durationSeconds: true } }),
       this.prisma.callExtraction.aggregate({ where: { call: base }, _sum: { budget: true } }),
       this.prisma.callExtraction.groupBy({ by: ['sentiment'], where: { sentiment: { not: null }, call: base }, _count: true }),
+      this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } } }),
     ]);
 
     const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
     const interestedCount = sentimentCounts.find((s) => s.sentiment === 'interested')?._count ?? 0;
+    const totalBudget = budgetAgg._sum.budget != null ? Number(budgetAgg._sum.budget) : 0;
+    const customerCount = distinctCustomers.length;
 
     return {
       totalCalls, // always equals carGlassesEnquiries + carModificationEnquiries + unknownCategoryEnquiries
@@ -68,19 +93,25 @@ export class ReportsService {
       followUpsOverdue,
       avgCallDurationSeconds:
         durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
-      totalBudgetPotential: budgetAgg._sum.budget != null ? Number(budgetAgg._sum.budget) : 0,
+      // Total stated budget across these calls, spread across the distinct
+      // customers behind them -- an average expected spend per customer
+      // rather than a lump sum that gets bigger just because more calls came in.
+      budgetPotentialPerCustomer: customerCount > 0 ? Math.round(totalBudget / customerCount) : 0,
       interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
     };
   }
 
   async callsByPeriod(granularity: 'daily' | 'weekly' | 'monthly' = 'daily', filters: QueryReportsDto = {}) {
     const trunc = granularity === 'monthly' ? 'month' : granularity === 'weekly' ? 'week' : 'day';
-    const conditions = this.buildCallConditions(filters, 'calls');
+    const needsJoin = this.needsExtractionJoin(filters);
+    const conditions = this.buildCallConditions(filters, 'calls', needsJoin ? 'ce' : undefined);
     const whereSql = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+    const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = calls.id` : Prisma.empty;
 
     const rows = await this.prisma.$queryRaw<Array<{ period: Date; count: bigint }>>(Prisma.sql`
       SELECT date_trunc(${trunc}, call_date) AS period, COUNT(*)::bigint AS count
       FROM calls
+      ${joinSql}
       ${whereSql}
       GROUP BY period
       ORDER BY period DESC
@@ -112,7 +143,10 @@ export class ReportsService {
   }
 
   async topCarModels(limit = 10, filters: QueryReportsDto = {}) {
-    const conditions = [Prisma.sql`ce.car_model IS NOT NULL AND ce.car_model <> ''`, ...this.buildCallConditions(filters, 'c')];
+    const conditions = [
+      Prisma.sql`ce.car_model IS NOT NULL AND ce.car_model <> ''`,
+      ...this.buildCallConditions(filters, 'c', 'ce'),
+    ];
 
     const rows = await this.prisma.$queryRaw<Array<{ car_model: string; count: bigint }>>(Prisma.sql`
       SELECT ce.car_model, COUNT(*)::bigint AS count
@@ -127,14 +161,17 @@ export class ReportsService {
   }
 
   async topProducts(limit = 10, filters: QueryReportsDto = {}) {
-    const conditions = this.buildCallConditions(filters, 'c');
+    const needsJoin = this.needsExtractionJoin(filters);
+    const conditions = this.buildCallConditions(filters, 'c', needsJoin ? 'ce' : undefined);
     const whereSql = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+    const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = c.id` : Prisma.empty;
 
     const rows = await this.prisma.$queryRaw<Array<{ name: string; category: string; count: bigint }>>(Prisma.sql`
       SELECT p.name, p.category, COUNT(*)::bigint AS count
       FROM call_products cp
       JOIN products p ON p.id = cp.product_id
       JOIN calls c ON c.id = cp.call_id
+      ${joinSql}
       ${whereSql}
       GROUP BY p.id, p.name, p.category
       ORDER BY count DESC
@@ -144,12 +181,15 @@ export class ReportsService {
   }
 
   async topEmployees(limit = 10, filters: QueryReportsDto = {}) {
-    const conditions = [Prisma.sql`c.employee_id IS NOT NULL`, ...this.buildCallConditions(filters, 'c')];
+    const needsJoin = this.needsExtractionJoin(filters);
+    const conditions = [Prisma.sql`c.employee_id IS NOT NULL`, ...this.buildCallConditions(filters, 'c', needsJoin ? 'ce' : undefined)];
+    const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = c.id` : Prisma.empty;
 
     const rows = await this.prisma.$queryRaw<Array<{ name: string; count: bigint }>>(Prisma.sql`
       SELECT e.name, COUNT(*)::bigint AS count
       FROM calls c
       JOIN employees e ON e.id = c.employee_id
+      ${joinSql}
       WHERE ${Prisma.join(conditions, ' AND ')}
       GROUP BY e.id, e.name
       ORDER BY count DESC

@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsOptional, IsUUID } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class QueryReportsDto {
   @IsOptional()
@@ -8,6 +8,18 @@ export class QueryReportsDto {
   @IsOptional()
   @IsUUID()
   employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  carMake?: string;
+
+  @IsOptional()
+  @IsString()
+  carModel?: string;
+
+  @IsOptional()
+  @IsIn(['interested', 'not_interested', 'needs_follow_up'])
+  sentiment?: 'interested' | 'not_interested' | 'needs_follow_up';
 
   @IsOptional()
   @IsDateString()
