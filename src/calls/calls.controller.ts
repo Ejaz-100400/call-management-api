@@ -29,6 +29,12 @@ export class CallsController {
     return this.callsService.distinctCarModels(carMake);
   }
 
+  @Get('duplicates')
+  @Roles('admin', 'manager')
+  findDuplicates() {
+    return this.callsService.findDuplicates();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.callsService.findOne(id);

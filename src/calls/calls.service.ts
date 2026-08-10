@@ -219,6 +219,65 @@ export class CallsService {
     return { deleted: calls.length };
   }
 
+  /**
+   * Calls sharing the same customer, the exact same call_date, AND the same
+   * extracted vehicle -- the signature of an import row (Excel or photo-scan)
+   * that got processed twice, e.g. the same photo uploaded in two batches.
+   * Customer + date alone isn't enough: a customer can genuinely have two
+   * different real enquiries land on the same (often defaulted) date, and
+   * requiring the same car_make/car_model as well is what tells those apart
+   * from an actual re-import -- confirmed against production data, where
+   * customer+date alone flagged 16 "duplicate" groups but most were two
+   * different cars for the same customer; adding vehicle brought it down to
+   * the 3 that were genuinely identical rows. NULL make/model still groups
+   * together correctly since GROUP BY treats NULLs as equal to each other.
+   */
+  async findDuplicates() {
+    const groups = await this.prisma.$queryRaw<
+      Array<{ customer_id: string; call_date: Date; car_make: string | null; car_model: string | null; call_ids: string[] }>
+    >`
+      SELECT c.customer_id, c.call_date, ce.car_make, ce.car_model, array_agg(c.id ORDER BY c.created_at) AS call_ids
+      FROM calls c
+      LEFT JOIN call_extractions ce ON ce.call_id = c.id
+      WHERE c.customer_id IS NOT NULL
+      GROUP BY c.customer_id, c.call_date, ce.car_make, ce.car_model
+      HAVING COUNT(*) > 1
+      ORDER BY c.call_date DESC
+      LIMIT 50;
+    `;
+    if (groups.length === 0) return [];
+
+    const calls = await this.prisma.call.findMany({
+      where: { id: { in: groups.flatMap((g) => g.call_ids) } },
+      include: { customer: true, employee: true, extraction: true },
+    });
+    const callsById = new Map(calls.map((c) => [c.id, c]));
+
+    return groups.map((g) => {
+      const first = callsById.get(g.call_ids[0]);
+      return {
+        customerId: g.customer_id,
+        customerName: first?.customer?.name ?? null,
+        customerPhone: first?.customer?.phoneNumber ?? null,
+        callDate: g.call_date,
+        calls: g.call_ids
+          .map((id) => callsById.get(id))
+          .filter((c): c is NonNullable<typeof c> => c != null)
+          .map((c) => ({
+            id: c.id,
+            businessCategory: c.businessCategory,
+            carMake: c.extraction?.carMake ?? null,
+            carModel: c.extraction?.carModel ?? null,
+            employeeName: c.employee?.name ?? null,
+            status: c.status,
+            summary: c.extraction?.summary ?? null,
+            imported: c.extraction?.extractedByModel === 'manual_import',
+            createdAt: c.createdAt,
+          })),
+      };
+    });
+  }
+
   /** Populates the Car Make filter dropdown -- every distinct value actually on record. */
   async distinctCarMakes(): Promise<string[]> {
     const rows = await this.prisma.callExtraction.findMany({
