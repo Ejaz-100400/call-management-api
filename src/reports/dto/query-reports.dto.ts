@@ -22,6 +22,10 @@ export class QueryReportsDto {
   sentiment?: 'interested' | 'not_interested' | 'needs_follow_up';
 
   @IsOptional()
+  @IsUUID()
+  productId?: string;
+
+  @IsOptional()
   @IsDateString()
   dateFrom?: string;
 

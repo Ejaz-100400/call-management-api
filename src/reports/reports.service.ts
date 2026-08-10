@@ -8,7 +8,7 @@ import { QueryReportsDto } from './dto/query-reports.dto';
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
-  /** Shared category/employee/date-range/vehicle/sentiment filter, applied consistently across every report. */
+  /** Shared category/employee/date-range/vehicle/sentiment/product filter, applied consistently across every report. */
   private buildCallWhere(filters: QueryReportsDto): Prisma.CallWhereInput {
     const extractionFilter: Prisma.CallExtractionWhereInput = {
       ...(filters.carMake && { carMake: { contains: filters.carMake, mode: 'insensitive' } }),
@@ -26,6 +26,7 @@ export class ReportsService {
         },
       }),
       ...(Object.keys(extractionFilter).length > 0 && { extraction: extractionFilter }),
+      ...(filters.productId && { products: { some: { productId: filters.productId } } }),
     };
   }
 
@@ -41,6 +42,11 @@ export class ReportsService {
     if (filters.employeeId) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.employee_id = ${filters.employeeId}::uuid`);
     if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date >= ${startOfDayIST(filters.dateFrom)}`);
     if (filters.dateTo) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date < ${endOfDayIST(filters.dateTo)}`);
+    if (filters.productId) {
+      conditions.push(
+        Prisma.sql`EXISTS (SELECT 1 FROM call_products cpf WHERE cpf.call_id = ${Prisma.raw(callAlias)}.id AND cpf.product_id = ${filters.productId}::uuid)`,
+      );
+    }
     if (extractionAlias) {
       if (filters.carMake) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_make ILIKE ${'%' + filters.carMake + '%'}`);
       if (filters.carModel) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_model ILIKE ${'%' + filters.carModel + '%'}`);

@@ -18,6 +18,17 @@ export class CallsController {
     return this.callsService.findAll(query);
   }
 
+  // Must be registered before ':id' so these literal segments aren't matched as an id.
+  @Get('car-makes')
+  carMakes() {
+    return this.callsService.distinctCarMakes();
+  }
+
+  @Get('car-models')
+  carModels(@Query('carMake') carMake?: string) {
+    return this.callsService.distinctCarModels(carMake);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.callsService.findOne(id);

@@ -219,6 +219,32 @@ export class CallsService {
     return { deleted: calls.length };
   }
 
+  /** Populates the Car Make filter dropdown -- every distinct value actually on record. */
+  async distinctCarMakes(): Promise<string[]> {
+    const rows = await this.prisma.callExtraction.findMany({
+      where: { carMake: { not: null } },
+      distinct: ['carMake'],
+      select: { carMake: true },
+      orderBy: { carMake: 'asc' },
+    });
+    return rows.map((r) => r.carMake!).filter((make) => make.trim() !== '');
+  }
+
+  /**
+   * Populates the Car Model filter dropdown. Scoped to a make when one's
+   * already selected, so the list doesn't offer models that can't match --
+   * otherwise every model on record.
+   */
+  async distinctCarModels(carMake?: string): Promise<string[]> {
+    const rows = await this.prisma.callExtraction.findMany({
+      where: { carModel: { not: null }, ...(carMake && { carMake }) },
+      distinct: ['carModel'],
+      select: { carModel: true },
+      orderBy: { carModel: 'asc' },
+    });
+    return rows.map((r) => r.carModel!).filter((model) => model.trim() !== '');
+  }
+
   async getRecordingUrl(id: string) {
     const call = await this.findOne(id);
     if (!call.recordingStorageKey) {
