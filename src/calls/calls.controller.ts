@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query
 import { User } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { BulkDeleteCallsDto } from './dto/bulk-delete-calls.dto';
 import { CallsService } from './calls.service';
 import { QueryCallsDto } from './dto/query-calls.dto';
 import { UpdateCallDto } from './dto/update-call.dto';
@@ -47,6 +48,12 @@ export class CallsController {
   @Roles('admin')
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
     return this.callsService.remove(id, user.id);
+  }
+
+  @Post('bulk-delete')
+  @Roles('admin')
+  removeMany(@Body() dto: BulkDeleteCallsDto, @CurrentUser() user: User) {
+    return this.callsService.removeMany(dto.ids, user.id);
   }
 
   @Post(':id/reprocess')

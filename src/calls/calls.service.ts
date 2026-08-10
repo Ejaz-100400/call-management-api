@@ -193,6 +193,31 @@ export class CallsService {
     return { deleted: true };
   }
 
+  /**
+   * Bulk counterpart to remove() -- silently ignores any ids that don't
+   * exist (already deleted, or a stale selection from a page that's since
+   * changed) rather than failing the whole batch over it.
+   */
+  async removeMany(ids: string[], deletedById: string) {
+    const calls = await this.prisma.call.findMany({ where: { id: { in: ids } }, select: { id: true, callDate: true } });
+    if (calls.length === 0) return { deleted: 0 };
+
+    await this.prisma.$transaction([
+      this.prisma.call.deleteMany({ where: { id: { in: calls.map((c) => c.id) } } }),
+      this.prisma.auditLog.createMany({
+        data: calls.map((c) => ({
+          userId: deletedById,
+          action: 'delete_call',
+          entity: 'calls',
+          entityId: c.id,
+          details: { callDate: c.callDate.toISOString() },
+        })),
+      }),
+    ]);
+
+    return { deleted: calls.length };
+  }
+
   async getRecordingUrl(id: string) {
     const call = await this.findOne(id);
     if (!call.recordingStorageKey) {
