@@ -257,7 +257,7 @@ export class ImportService {
    */
   async recordImportHistory(
     userId: string,
-    source: 'excel' | 'photo_ocr',
+    source: 'excel' | 'photo_ocr' | 'manual',
     result: ImportResult,
     importedRows: ImportedRowSummary[],
   ) {

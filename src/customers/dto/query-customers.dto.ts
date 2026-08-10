@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class QueryCustomersDto {
   @IsOptional()
@@ -9,6 +9,18 @@ export class QueryCustomersDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  carMake?: string; // matches any of the customer's calls
+
+  @IsOptional()
+  @IsString()
+  carModel?: string;
+
+  @IsOptional()
+  @IsIn(['car_glasses', 'car_modifications', 'unknown'])
+  category?: 'car_glasses' | 'car_modifications' | 'unknown';
 
   @IsOptional()
   @Type(() => Number)

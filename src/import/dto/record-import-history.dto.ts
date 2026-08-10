@@ -30,8 +30,8 @@ class ImportErrorDto {
 }
 
 export class RecordImportHistoryDto {
-  @IsIn(['excel', 'photo_ocr'])
-  source: 'excel' | 'photo_ocr';
+  @IsIn(['excel', 'photo_ocr', 'manual'])
+  source: 'excel' | 'photo_ocr' | 'manual';
 
   @IsInt()
   @Min(0)

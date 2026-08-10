@@ -19,6 +19,17 @@ export class CallsService {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
 
+    // Every extraction-scoped filter has to land on the same `extraction` key --
+    // spreading multiple `{ extraction: {...} }` objects into `where` would have
+    // each one silently clobber the last, since object spread doesn't merge
+    // nested keys.
+    const extractionFilter: Prisma.CallExtractionWhereInput = {
+      ...(query.carMake && { carMake: { contains: query.carMake, mode: 'insensitive' } }),
+      ...(query.carModel && { carModel: { contains: query.carModel, mode: 'insensitive' } }),
+      ...(query.sentiment && { sentiment: query.sentiment }),
+      ...(query.followUpRequired !== undefined && { followUpRequired: query.followUpRequired === 'true' }),
+    };
+
     const where: Prisma.CallWhereInput = {
       ...(query.category && { businessCategory: query.category }),
       ...(query.employeeId && { employeeId: query.employeeId }),
@@ -31,9 +42,7 @@ export class CallsService {
       ...(query.phone && {
         customer: { phoneNumber: { contains: query.phone } },
       }),
-      ...(query.carModel && {
-        extraction: { carModel: { contains: query.carModel, mode: 'insensitive' } },
-      }),
+      ...(Object.keys(extractionFilter).length > 0 && { extraction: extractionFilter }),
       ...(query.search && {
         OR: [
           { customer: { name: { contains: query.search, mode: 'insensitive' } } },

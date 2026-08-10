@@ -12,7 +12,22 @@ export class QueryCallsDto {
 
   @IsOptional()
   @IsString()
+  carMake?: string;
+
+  @IsOptional()
+  @IsString()
   carModel?: string;
+
+  @IsOptional()
+  @IsIn(['interested', 'not_interested', 'needs_follow_up'])
+  sentiment?: 'interested' | 'not_interested' | 'needs_follow_up';
+
+  // Query params arrive as strings -- 'true'/'false' rather than a real
+  // boolean -- so the service parses this itself instead of using @Type(Boolean),
+  // which would coerce any non-empty string (including "false") to true.
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  followUpRequired?: 'true' | 'false';
 
   @IsOptional()
   @IsIn(['car_glasses', 'car_modifications', 'unknown'])

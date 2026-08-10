@@ -11,7 +11,7 @@ import { UpdateExtractionDto } from './dto/update-extraction.dto';
 export class CallsController {
   constructor(private readonly callsService: CallsService) {}
 
-  // GET /calls?search=&phone=&carModel=&category=&dateFrom=&dateTo=&employeeId=
+  // GET /calls?search=&phone=&carMake=&carModel=&sentiment=&followUpRequired=&category=&dateFrom=&dateTo=&employeeId=
   @Get()
   findAll(@Query() query: QueryCallsDto) {
     return this.callsService.findAll(query);
