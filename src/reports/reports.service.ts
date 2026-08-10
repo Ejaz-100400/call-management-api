@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, SentimentType } from '@prisma/client';
+import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryReportsDto } from './dto/query-reports.dto';
 
@@ -14,8 +15,8 @@ export class ReportsService {
       ...(filters.employeeId && { employeeId: filters.employeeId }),
       ...((filters.dateFrom || filters.dateTo) && {
         callDate: {
-          ...(filters.dateFrom && { gte: new Date(filters.dateFrom) }),
-          ...(filters.dateTo && { lte: new Date(filters.dateTo) }),
+          ...(filters.dateFrom && { gte: startOfDayIST(filters.dateFrom) }),
+          ...(filters.dateTo && { lt: endOfDayIST(filters.dateTo) }),
         },
       }),
     };
@@ -26,26 +27,49 @@ export class ReportsService {
     const conditions: Prisma.Sql[] = [];
     if (filters.category) conditions.push(Prisma.sql`${Prisma.raw(alias)}.business_category = ${filters.category}::business_category`);
     if (filters.employeeId) conditions.push(Prisma.sql`${Prisma.raw(alias)}.employee_id = ${filters.employeeId}::uuid`);
-    if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(alias)}.call_date >= ${new Date(filters.dateFrom)}`);
-    if (filters.dateTo) conditions.push(Prisma.sql`${Prisma.raw(alias)}.call_date <= ${new Date(filters.dateTo)}`);
+    if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(alias)}.call_date >= ${startOfDayIST(filters.dateFrom)}`);
+    if (filters.dateTo) conditions.push(Prisma.sql`${Prisma.raw(alias)}.call_date < ${endOfDayIST(filters.dateTo)}`);
     return conditions;
   }
 
   async summary(filters: QueryReportsDto) {
     const base = this.buildCallWhere(filters);
-    const [totalCalls, carGlasses, carMods, followUpsPending] = await Promise.all([
+    const [
+      totalCalls,
+      carGlasses,
+      carMods,
+      unknownCategory,
+      followUpsPending,
+      followUpsOverdue,
+      durationAgg,
+      budgetAgg,
+      sentimentCounts,
+    ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_modifications' } }),
+      this.prisma.call.count({ where: { ...base, businessCategory: 'unknown' } }),
       this.prisma.followUp.count({ where: { status: 'pending', call: base } }),
+      this.prisma.followUp.count({ where: { status: 'pending', dueDate: { lt: new Date() }, call: base } }),
+      this.prisma.call.aggregate({ where: base, _avg: { durationSeconds: true } }),
+      this.prisma.callExtraction.aggregate({ where: { call: base }, _sum: { budget: true } }),
+      this.prisma.callExtraction.groupBy({ by: ['sentiment'], where: { sentiment: { not: null }, call: base }, _count: true }),
     ]);
 
+    const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
+    const interestedCount = sentimentCounts.find((s) => s.sentiment === 'interested')?._count ?? 0;
+
     return {
-      totalCalls,
-      totalEnquiries: totalCalls, // every recorded call is an enquiry in this business model
+      totalCalls, // always equals carGlassesEnquiries + carModificationEnquiries + unknownCategoryEnquiries
       carGlassesEnquiries: carGlasses,
       carModificationEnquiries: carMods,
+      unknownCategoryEnquiries: unknownCategory,
       followUpsPending,
+      followUpsOverdue,
+      avgCallDurationSeconds:
+        durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
+      totalBudgetPotential: budgetAgg._sum.budget != null ? Number(budgetAgg._sum.budget) : 0,
+      interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
     };
   }
 

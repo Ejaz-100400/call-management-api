@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
@@ -35,8 +36,8 @@ export class CallsService {
       ...(query.employeeId && { employeeId: query.employeeId }),
       ...((query.dateFrom || query.dateTo) && {
         callDate: {
-          ...(query.dateFrom && { gte: new Date(query.dateFrom) }),
-          ...(query.dateTo && { lte: new Date(query.dateTo) }),
+          ...(query.dateFrom && { gte: startOfDayIST(query.dateFrom) }),
+          ...(query.dateTo && { lt: endOfDayIST(query.dateTo) }),
         },
       }),
       ...(query.phone && {
