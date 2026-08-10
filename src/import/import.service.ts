@@ -153,7 +153,7 @@ export class ImportService {
       }
     };
 
-    applyListValidation(sheet, 'B', '"Car Glasses,Car Modifications"', 'Pick from the list, or leave blank if unknown.');
+    applyListValidation(sheet, 'B', '"Car Glasses,Car Modifications,Unknown"', 'Pick from the list, or leave blank if unknown.');
     applyListValidation(sheet, 'Q', '"Interested,Not Interested,Needs Follow-up"', 'Pick from the list, or leave blank if unknown.');
 
     // Employee names are per-business data, not a fixed set -- list them on
@@ -602,6 +602,10 @@ export class ImportService {
     const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, ' ');
     if (normalized === 'car glasses') return 'car_glasses';
     if (normalized === 'car modifications' || normalized === 'car mods') return 'car_modifications';
+    // Explicit rather than relying on parseRow()'s ?? 'unknown' fallback --
+    // that fallback exists for genuinely unrecognized/blank cells, this is
+    // someone deliberately picking "Unknown" from the template's dropdown.
+    if (normalized === 'unknown') return 'unknown';
     return null;
   }
 
