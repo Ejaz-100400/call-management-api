@@ -1,32 +1,43 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ReportsService } from './reports.service';
+import { QueryReportsDto } from './dto/query-reports.dto';
 
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get('summary')
-  summary() {
-    return this.reportsService.summary();
+  summary(@Query() filters: QueryReportsDto) {
+    return this.reportsService.summary(filters);
   }
 
   @Get('calls-by-period')
-  callsByPeriod(@Query('granularity') granularity?: 'daily' | 'weekly' | 'monthly') {
-    return this.reportsService.callsByPeriod(granularity);
+  callsByPeriod(@Query('granularity') granularity: 'daily' | 'weekly' | 'monthly' | undefined, @Query() filters: QueryReportsDto) {
+    return this.reportsService.callsByPeriod(granularity, filters);
   }
 
   @Get('follow-ups')
-  followUps() {
-    return this.reportsService.followUpBreakdown();
+  followUps(@Query() filters: QueryReportsDto) {
+    return this.reportsService.followUpBreakdown(filters);
+  }
+
+  @Get('sentiment')
+  sentiment(@Query() filters: QueryReportsDto) {
+    return this.reportsService.sentimentBreakdown(filters);
   }
 
   @Get('top-car-models')
-  topCarModels(@Query('limit') limit?: string) {
-    return this.reportsService.topCarModels(limit ? Number(limit) : undefined);
+  topCarModels(@Query('limit') limit: string | undefined, @Query() filters: QueryReportsDto) {
+    return this.reportsService.topCarModels(limit ? Number(limit) : undefined, filters);
   }
 
   @Get('top-products')
-  topProducts(@Query('limit') limit?: string) {
-    return this.reportsService.topProducts(limit ? Number(limit) : undefined);
+  topProducts(@Query('limit') limit: string | undefined, @Query() filters: QueryReportsDto) {
+    return this.reportsService.topProducts(limit ? Number(limit) : undefined, filters);
+  }
+
+  @Get('top-employees')
+  topEmployees(@Query('limit') limit: string | undefined, @Query() filters: QueryReportsDto) {
+    return this.reportsService.topEmployees(limit ? Number(limit) : undefined, filters);
   }
 }
