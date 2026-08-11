@@ -20,8 +20,8 @@ export class CallsController {
 
   // Must be registered before ':id' so these literal segments aren't matched as an id.
   @Get('car-makes')
-  carMakes() {
-    return this.callsService.distinctCarMakes();
+  carMakes(@Query('carModel') carModel?: string) {
+    return this.callsService.distinctCarMakes(carModel);
   }
 
   @Get('car-models')

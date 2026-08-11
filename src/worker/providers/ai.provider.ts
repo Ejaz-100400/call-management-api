@@ -41,9 +41,11 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
       carModel: {
         type: 'string',
         description:
-          'e.g. Swift, Creta, EcoSport, 320d. Correct misheard/misspelled model names to the real model\'s ' +
-          'official spelling and capitalization, including the manufacturer\'s own unusual casing (e.g. ' +
-          '"EcoSport" not "Ecosport", "320d" stays lowercase "d" for BMW\'s diesel naming). Omit if not mentioned.',
+          'e.g. Swift, Creta, EcoSport, 320d -- the model ONLY, never prefixed with the make (put "Swift", ' +
+          'not "Maruti Swift"; the make already has its own field). Correct misheard/misspelled model names ' +
+          'to the real model\'s official spelling and capitalization, including the manufacturer\'s own ' +
+          'unusual casing (e.g. "EcoSport" not "Ecosport", "320d" stays lowercase "d" for BMW\'s diesel ' +
+          'naming). Omit if not mentioned.',
       },
       carVariant: { type: 'string', description: 'e.g. VXI, SX(O). Omit if not mentioned' },
       productsDiscussed: {

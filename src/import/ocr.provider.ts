@@ -81,8 +81,9 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
             carModel: {
               type: 'string',
               description:
-                'The vehicle model, read from the handwriting or inferred from context, separate from the ' +
-                'make. Correct illegible/misspelled handwriting to the real model\'s official spelling and ' +
+                'The vehicle model ONLY, read from the handwriting or inferred from context -- never prefixed ' +
+                'with the make (write "Swift", not "Maruti Swift"; the make already has its own field). ' +
+                'Correct illegible/misspelled handwriting to the real model\'s official spelling and ' +
                 'capitalization, including the manufacturer\'s own unusual casing (e.g. "EcoSport" not ' +
                 '"Ecosport", "320d" stays lowercase "d" for BMW\'s diesel naming).',
             },

@@ -83,14 +83,26 @@ export class CustomersService {
   }
 
   /**
+   * Deleting a customer sets customer_id to NULL on their calls (the FK's
+   * ON DELETE SET NULL, confirmed against the live schema) rather than
+   * deleting the calls themselves -- their call history survives as
+   * unassigned/"Unknown caller" rows instead of disappearing.
+   */
+  async removeMany(ids: string[]) {
+    const result = await this.prisma.customer.deleteMany({ where: { id: { in: ids } } });
+    return { deleted: result.count };
+  }
+
+  /**
    * Fuzzy duplicate detection using the pg_trgm similarity index already set
    * up in schema.sql. Exact phone-number matches aren't "duplicates" needing
    * review -- they're already the same customer by definition (phone_number
    * is unique) -- so this only surfaces name-similarity across DIFFERENT
-   * customer rows, for a human to confirm before merging.
+   * customer rows, for a human to confirm before merging. Call counts are
+   * included so the review step can show what merging would actually move.
    */
-  findDuplicates() {
-    return this.prisma.$queryRaw<
+  async findDuplicates() {
+    const pairs = await this.prisma.$queryRaw<
       Array<{ id_a: string; name_a: string; id_b: string; name_b: string; similarity: number }>
     >`
       SELECT a.id AS id_a, a.name AS name_a, b.id AS id_b, b.name AS name_b,
@@ -102,6 +114,17 @@ export class CustomersService {
       ORDER BY similarity DESC
       LIMIT 100;
     `;
+    if (pairs.length === 0) return [];
+
+    const ids = Array.from(new Set(pairs.flatMap((p) => [p.id_a, p.id_b])));
+    const counts = await this.prisma.call.groupBy({ by: ['customerId'], where: { customerId: { in: ids } }, _count: true });
+    const callCountById = new Map(counts.map((c) => [c.customerId, c._count]));
+
+    return pairs.map((p) => ({
+      ...p,
+      call_count_a: callCountById.get(p.id_a) ?? 0,
+      call_count_b: callCountById.get(p.id_b) ?? 0,
+    }));
   }
 
   async merge(duplicateId: string, canonicalId: string) {

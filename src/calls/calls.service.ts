@@ -112,6 +112,16 @@ export class CallsService {
       await this.syncFollowUp(callId, updated.followUpRequired, updated.followUpDate);
     }
 
+    // customerName here only edits this call's own extraction snapshot --
+    // the Customer page searches Customer.name, a separate column, so an
+    // edit here would otherwise never show up there. Propagate it.
+    if (dto.customerName?.trim()) {
+      const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { customerId: true } });
+      if (call?.customerId) {
+        await this.prisma.customer.update({ where: { id: call.customerId }, data: { name: dto.customerName.trim() } });
+      }
+    }
+
     await this.prisma.auditLog.create({
       data: {
         userId: editedById,
@@ -379,9 +389,9 @@ export class CallsService {
   }
 
   /** Populates the Car Make filter dropdown -- every distinct value actually on record. */
-  async distinctCarMakes(): Promise<string[]> {
+  async distinctCarMakes(carModel?: string): Promise<string[]> {
     const rows = await this.prisma.callExtraction.findMany({
-      where: { carMake: { not: null } },
+      where: { carMake: { not: null }, ...(carModel && { carModel }) },
       distinct: ['carMake'],
       select: { carMake: true },
       orderBy: { carMake: 'asc' },

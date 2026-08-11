@@ -211,7 +211,9 @@ export class ImportService {
       throw new BadRequestException(`Up to ${MAX_PHOTOS} photos per batch -- split into multiple uploads.`);
     }
 
-    const CONCURRENCY = 3;
+    // Each photo is an independent, network-bound Claude vision call -- higher
+    // concurrency cuts wall-clock time roughly proportionally for a full batch.
+    const CONCURRENCY = 6;
     const results: PhotoExtractResult[] = new Array(files.length);
     let next = 0;
 
@@ -246,6 +248,10 @@ export class ImportService {
    */
   async commitPhotoRows(rows: CommitPhotoRowDto[], userId: string): Promise<CommitRowsResult> {
     const result: CommitRowsResult = { imported: 0, skipped: 0, errors: [], importedRows: [] };
+    // Shared across the whole batch -- a photo/spreadsheet import is often
+    // dozens of rows for the same handful of cars, so without this every row
+    // re-runs the same similarity lookup against the DB from scratch.
+    const vehicleCache = new Map<string, string>();
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -274,7 +280,7 @@ export class ImportService {
           summary: row.summary?.trim() || undefined,
           sentiment: row.sentiment,
         };
-        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId));
+        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId, vehicleCache));
         result.imported++;
         result.importedRows.push({
           customerName: parsed.customerName,
@@ -480,7 +486,12 @@ export class ImportService {
     };
   }
 
-  private async persistRow(tx: Prisma.TransactionClient, data: ParsedRow, importedByUserId: string) {
+  private async persistRow(
+    tx: Prisma.TransactionClient,
+    data: ParsedRow,
+    importedByUserId: string,
+    vehicleCache?: Map<string, string>,
+  ) {
     const customer = await tx.customer.upsert({
       where: { phoneNumber: data.phone },
       create: { phoneNumber: data.phone, name: data.customerName ?? null },
@@ -500,8 +511,8 @@ export class ImportService {
     });
 
     const [carMake, carModel] = await Promise.all([
-      data.carMake ? this.normalizeVehicleField(tx, 'car_make', data.carMake) : undefined,
-      data.carModel ? this.normalizeVehicleField(tx, 'car_model', data.carModel) : undefined,
+      data.carMake ? this.normalizeVehicleField(tx, 'car_make', data.carMake, undefined, vehicleCache) : undefined,
+      data.carModel ? this.normalizeVehicleField(tx, 'car_model', data.carModel, data.carMake, vehicleCache) : undefined,
     ]);
 
     await tx.callExtraction.create({
@@ -553,9 +564,27 @@ export class ImportService {
     tx: Prisma.TransactionClient,
     column: 'car_make' | 'car_model',
     raw: string,
+    makeToStrip?: string,
+    cache?: Map<string, string>,
   ): Promise<string> {
-    const cleaned = raw.trim().replace(/[`'"]+$/g, '').trim();
+    let cleaned = raw.trim().replace(/[`'"]+$/g, '').trim();
     if (!cleaned) return cleaned;
+
+    // The model field shouldn't repeat the make (e.g. "Maruti Swift" typed
+    // into Car Model when Car Make is already "Maruti") -- strip it, unless
+    // that's literally all there is (e.g. "BMW 2011" with no real model
+    // ever given -- stripping to "2011" would just be worse than leaving it).
+    if (column === 'car_model' && makeToStrip?.trim()) {
+      const make = makeToStrip.trim();
+      if (cleaned.toLowerCase().startsWith(`${make.toLowerCase()} `)) {
+        const withoutMake = cleaned.slice(make.length).trim();
+        if (withoutMake && !/^\d+$/.test(withoutMake)) cleaned = withoutMake;
+      }
+    }
+
+    const cacheKey = `${column}:${makeToStrip ?? ''}:${cleaned.toLowerCase()}`;
+    const cached = cache?.get(cacheKey);
+    if (cached !== undefined) return cached;
 
     const [best] = await tx.$queryRaw<Array<{ value: string; similarity: number }>>(Prisma.sql`
       SELECT value, similarity(value, ${cleaned}) AS similarity
@@ -566,7 +595,9 @@ export class ImportService {
     // High threshold -- only fixes near-identical spelling/casing (e.g.
     // "ford" -> "Ford"), never merges genuinely different names.
     const VEHICLE_MATCH_THRESHOLD = 0.6;
-    return best && best.similarity >= VEHICLE_MATCH_THRESHOLD ? best.value : cleaned;
+    const result = best && best.similarity >= VEHICLE_MATCH_THRESHOLD ? best.value : cleaned;
+    cache?.set(cacheKey, result);
+    return result;
   }
 
   /**

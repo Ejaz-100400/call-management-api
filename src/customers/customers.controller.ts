@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { BulkDeleteCustomersDto } from './dto/bulk-delete-customers.dto';
 import { CustomersService } from './customers.service';
 import { QueryCustomersDto } from './dto/query-customers.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -40,5 +41,11 @@ export class CustomersController {
   @Roles('admin')
   merge(@Param('id', ParseUUIDPipe) duplicateId: string, @Body('canonicalId', ParseUUIDPipe) canonicalId: string) {
     return this.customersService.merge(duplicateId, canonicalId);
+  }
+
+  @Post('bulk-delete')
+  @Roles('admin')
+  removeMany(@Body() dto: BulkDeleteCustomersDto) {
+    return this.customersService.removeMany(dto.ids);
   }
 }
