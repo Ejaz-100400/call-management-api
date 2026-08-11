@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
@@ -276,6 +276,106 @@ export class CallsService {
           })),
       };
     });
+  }
+
+  /**
+   * Merges `duplicateId` into `canonicalId`: fills in any field the
+   * canonical call is missing from the duplicate (rather than blindly
+   * keeping one and discarding the other, which could silently drop a
+   * budget/summary/follow-up that only exists on the "losing" side), unions
+   * productsDiscussed, moves the transcript/follow-up over only if the
+   * canonical doesn't already have one, and reassigns product links
+   * (skipping ones the canonical already has). The duplicate call is then
+   * deleted -- anything left attached to it (because the canonical already
+   * had its own copy) is removed via cascade.
+   */
+  async mergeCalls(duplicateId: string, canonicalId: string, mergedById: string) {
+    if (duplicateId === canonicalId) {
+      throw new BadRequestException('Cannot merge a call into itself');
+    }
+
+    const [canonical, duplicate] = await Promise.all([
+      this.prisma.call.findUnique({ where: { id: canonicalId }, include: { extraction: true, transcript: true } }),
+      this.prisma.call.findUnique({ where: { id: duplicateId }, include: { extraction: true, transcript: true } }),
+    ]);
+    if (!canonical) throw new NotFoundException(`Call ${canonicalId} not found`);
+    if (!duplicate) throw new NotFoundException(`Call ${duplicateId} not found`);
+
+    await this.prisma.$transaction(async (tx) => {
+      const callPatch: Prisma.CallUpdateInput = {};
+      if (!canonical.employeeId && duplicate.employeeId) callPatch.employee = { connect: { id: duplicate.employeeId } };
+      if (!canonical.recordingStorageKey && duplicate.recordingStorageKey) callPatch.recordingStorageKey = duplicate.recordingStorageKey;
+      if (Object.keys(callPatch).length > 0) {
+        await tx.call.update({ where: { id: canonicalId }, data: callPatch });
+      }
+
+      if (duplicate.extraction) {
+        if (!canonical.extraction) {
+          // Canonical has no extraction at all yet -- just re-point the duplicate's.
+          await tx.callExtraction.update({ where: { callId: duplicateId }, data: { callId: canonicalId } });
+        } else {
+          const e = canonical.extraction;
+          const d = duplicate.extraction;
+          const patch: Prisma.CallExtractionUpdateInput = {};
+          if (!e.customerName && d.customerName) patch.customerName = d.customerName;
+          if (!e.carMake && d.carMake) patch.carMake = d.carMake;
+          if (!e.carModel && d.carModel) patch.carModel = d.carModel;
+          if (!e.carVariant && d.carVariant) patch.carVariant = d.carVariant;
+          if (!e.location && d.location) patch.location = d.location;
+          if (!e.customerRequirements && d.customerRequirements) patch.customerRequirements = d.customerRequirements;
+          if (e.budget == null && d.budget != null) patch.budget = d.budget;
+          if (!e.followUpDate && d.followUpDate) patch.followUpDate = d.followUpDate;
+          if (!e.followUpRequired && d.followUpRequired) patch.followUpRequired = true;
+          if (!e.summary && d.summary) patch.summary = d.summary;
+          if (!e.sentiment && d.sentiment) patch.sentiment = d.sentiment;
+
+          const existingProducts = Array.isArray(e.productsDiscussed) ? (e.productsDiscussed as string[]) : [];
+          const duplicateProducts = Array.isArray(d.productsDiscussed) ? (d.productsDiscussed as string[]) : [];
+          const mergedProducts = Array.from(new Set([...existingProducts, ...duplicateProducts]));
+          if (mergedProducts.length !== existingProducts.length) patch.productsDiscussed = mergedProducts;
+
+          if (Object.keys(patch).length > 0) {
+            await tx.callExtraction.update({ where: { callId: canonicalId }, data: patch });
+          }
+        }
+      }
+
+      if (duplicate.transcript && !canonical.transcript) {
+        await tx.transcript.update({ where: { callId: duplicateId }, data: { callId: canonicalId } });
+      }
+
+      const [canonicalFollowUp, duplicateFollowUp] = await Promise.all([
+        tx.followUp.findFirst({ where: { callId: canonicalId } }),
+        tx.followUp.findFirst({ where: { callId: duplicateId } }),
+      ]);
+      if (duplicateFollowUp && !canonicalFollowUp) {
+        await tx.followUp.update({ where: { id: duplicateFollowUp.id }, data: { callId: canonicalId } });
+      }
+
+      const duplicateProductLinks = await tx.callProduct.findMany({ where: { callId: duplicateId } });
+      if (duplicateProductLinks.length > 0) {
+        await tx.callProduct.createMany({
+          data: duplicateProductLinks.map((p) => ({ callId: canonicalId, productId: p.productId })),
+          skipDuplicates: true,
+        });
+      }
+
+      // Cascades away anything still attached (the canonical already had its
+      // own copy of that data, so the duplicate's version is safe to drop).
+      await tx.call.delete({ where: { id: duplicateId } });
+
+      await tx.auditLog.create({
+        data: {
+          userId: mergedById,
+          action: 'merge_call',
+          entity: 'calls',
+          entityId: canonicalId,
+          details: { mergedCallId: duplicateId },
+        },
+      });
+    });
+
+    return this.findOne(canonicalId);
   }
 
   /** Populates the Car Make filter dropdown -- every distinct value actually on record. */

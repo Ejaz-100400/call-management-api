@@ -35,6 +35,12 @@ export class CallsController {
     return this.callsService.findDuplicates();
   }
 
+  @Post('duplicates/:id/merge')
+  @Roles('admin')
+  mergeCalls(@Param('id', ParseUUIDPipe) duplicateId: string, @Body('canonicalId', ParseUUIDPipe) canonicalId: string, @CurrentUser() user: User) {
+    return this.callsService.mergeCalls(duplicateId, canonicalId, user.id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.callsService.findOne(id);
