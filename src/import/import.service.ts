@@ -3,12 +3,12 @@ import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
+import { linkDiscussedProducts } from '../common/product-matching.util';
 import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
 import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } from './ocr.provider';
 
 const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
-const PRODUCT_MATCH_THRESHOLD = 0.25;
 
 interface ParsedRow {
   phone: string;
@@ -548,7 +548,7 @@ export class ImportService {
     }
 
     if (data.products.length > 0) {
-      await this.linkDiscussedProducts(tx, call.id, data.category, data.products);
+      await linkDiscussedProducts(tx, call.id, data.category, data.products);
     }
   }
 
@@ -605,30 +605,6 @@ export class ImportService {
    * (worker/processors/process-call.ts) so historical imports land in the
    * same reports/product-analytics views the same way live calls do.
    */
-  private async linkDiscussedProducts(
-    tx: Prisma.TransactionClient,
-    callId: string,
-    businessCategory: BusinessCategory,
-    productsDiscussed: string[],
-  ) {
-    const matchedProductIds = new Set<string>();
-    for (const discussed of productsDiscussed) {
-      const [best] = await tx.$queryRaw<Array<{ id: string; similarity: number }>>`
-        SELECT id, similarity(name, ${discussed}) AS similarity
-        FROM products
-        WHERE category = ${businessCategory}::business_category AND active = true
-        ORDER BY similarity DESC
-        LIMIT 1;
-      `;
-      if (best && best.similarity >= PRODUCT_MATCH_THRESHOLD) matchedProductIds.add(best.id);
-    }
-    if (matchedProductIds.size === 0) return;
-    await tx.callProduct.createMany({
-      data: Array.from(matchedProductIds).map((productId) => ({ callId, productId })),
-      skipDuplicates: true,
-    });
-  }
-
   private parseCategory(value: string): BusinessCategory | null {
     const normalized = value.trim().toLowerCase().replace(/[\s_-]+/g, ' ');
     if (normalized === 'car glasses') return 'car_glasses';

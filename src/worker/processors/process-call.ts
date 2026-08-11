@@ -1,5 +1,6 @@
-import { PrismaClient, type BusinessCategory } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import type { CallProcessingJob } from '../../queue/queue.service';
+import { linkDiscussedProducts } from '../../common/product-matching.util';
 import { defaultFollowUpDueDate } from '../../follow-ups/follow-up.util';
 import { extractCallInfo } from '../providers/ai.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
@@ -109,7 +110,7 @@ async function fullReprocess(callId: string, recordingUrl?: string) {
       });
     }
 
-    await linkDiscussedProducts(callId, call.businessCategory, extraction.productsDiscussed);
+    await linkDiscussedProducts(prisma, callId, call.businessCategory, extraction.productsDiscussed);
 
     await prisma.call.update({
       where: { id: callId },
@@ -155,51 +156,5 @@ async function backfillCustomerName(customerId: string | null, customerName: str
   await prisma.customer.updateMany({
     where: { id: customerId, name: null },
     data: { name: customerName },
-  });
-}
-
-/**
- * The AI extracts products "in the customer's or agent's own words" (see
- * ai.provider.ts), so this is free text like "windshield crack repair" or
- * "underglow lighting" rather than a clean match against the catalog. Uses
- * the same pg_trgm fuzzy-similarity approach as the customer-duplicate
- * detection in customers.service.ts (word order and exact phrasing don't
- * have to match), scoped to the call's business category to cut down on
- * false positives, so reports like "top products" have real data instead
- * of everyone's phrasing staying siloed in the raw JSONB field forever.
- * Best-effort: an unmatched phrase is just skipped, not an error. Threshold
- * picked empirically -- 0.25+ cleanly separated real matches (0.29-1.0)
- * from noise (~0.1 for genuinely unrelated phrases) against this catalog.
- */
-const PRODUCT_MATCH_THRESHOLD = 0.25;
-
-async function linkDiscussedProducts(
-  callId: string,
-  businessCategory: BusinessCategory,
-  productsDiscussed: string[],
-) {
-  // Clear any existing links first -- this runs on reprocess too, and
-  // call_products has no natural way to "upsert" a set membership.
-  await prisma.callProduct.deleteMany({ where: { callId } });
-
-  const matchedProductIds = new Set<string>();
-  for (const discussed of productsDiscussed) {
-    if (!discussed.trim()) continue;
-
-    const [best] = await prisma.$queryRaw<Array<{ id: string; similarity: number }>>`
-      SELECT id, similarity(name, ${discussed}) AS similarity
-      FROM products
-      WHERE category = ${businessCategory}::business_category AND active = true
-      ORDER BY similarity DESC
-      LIMIT 1;
-    `;
-    if (best && best.similarity >= PRODUCT_MATCH_THRESHOLD) matchedProductIds.add(best.id);
-  }
-
-  if (matchedProductIds.size === 0) return;
-
-  await prisma.callProduct.createMany({
-    data: Array.from(matchedProductIds).map((productId) => ({ callId, productId })),
-    skipDuplicates: true,
   });
 }

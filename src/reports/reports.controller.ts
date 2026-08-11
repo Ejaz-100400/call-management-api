@@ -16,6 +16,11 @@ export class ReportsController {
     return this.reportsService.callsByPeriod(granularity, filters);
   }
 
+  @Get('customers-by-period')
+  customersByPeriod(@Query('granularity') granularity: 'daily' | 'weekly' | 'monthly' | undefined, @Query() filters: QueryReportsDto) {
+    return this.reportsService.customersByPeriod(granularity, filters);
+  }
+
   @Get('follow-ups')
   followUps(@Query() filters: QueryReportsDto) {
     return this.reportsService.followUpBreakdown(filters);

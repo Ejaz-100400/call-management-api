@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, SentimentType } from '@prisma/client';
+import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
 import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryReportsDto } from './dto/query-reports.dto';
@@ -120,9 +120,19 @@ export class ReportsService {
       // rather than a lump sum that gets bigger just because more calls came in.
       budgetPotentialPerCustomer: customerCount > 0 ? Math.round(totalBudget / customerCount) : 0,
       interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
+      totalCustomers: customerCount,
     };
   }
 
+  /**
+   * Broken out per business category (car_glasses / car_modifications /
+   * unknown) so the volume chart can plot Glasses vs Modifications as
+   * separate lines instead of one blended total. Grouping happens two ways
+   * at once -- period AND category -- so the LIMIT can't be applied in SQL
+   * (it would cap rows, not periods, cutting off whichever category comes
+   * later in category order for a period near the boundary); pivot into one
+   * row per period first, then take the most recent 90 periods.
+   */
   async callsByPeriod(granularity: 'daily' | 'weekly' | 'monthly' = 'daily', filters: QueryReportsDto = {}) {
     const trunc = granularity === 'monthly' ? 'month' : granularity === 'weekly' ? 'week' : 'day';
     const needsJoin = this.needsExtractionJoin(filters);
@@ -130,8 +140,40 @@ export class ReportsService {
     const whereSql = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
     const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = calls.id` : Prisma.empty;
 
+    const rows = await this.prisma.$queryRaw<Array<{ period: Date; business_category: BusinessCategory; count: bigint }>>(Prisma.sql`
+      SELECT date_trunc(${trunc}, call_date) AS period, business_category, COUNT(*)::bigint AS count
+      FROM calls
+      ${joinSql}
+      ${whereSql}
+      GROUP BY period, business_category
+      ORDER BY period DESC;
+    `);
+
+    const byPeriod = new Map<number, { period: Date; carGlasses: number; carModifications: number; unknown: number }>();
+    for (const r of rows) {
+      const key = r.period.getTime();
+      const entry = byPeriod.get(key) ?? { period: r.period, carGlasses: 0, carModifications: 0, unknown: 0 };
+      if (r.business_category === 'car_glasses') entry.carGlasses = Number(r.count);
+      else if (r.business_category === 'car_modifications') entry.carModifications = Number(r.count);
+      else entry.unknown = Number(r.count);
+      byPeriod.set(key, entry);
+    }
+
+    return Array.from(byPeriod.values())
+      .sort((a, b) => b.period.getTime() - a.period.getTime())
+      .slice(0, 90);
+  }
+
+  /** Distinct customers per period (not call count) -- shows growth in who's calling, not just how often. */
+  async customersByPeriod(granularity: 'daily' | 'weekly' | 'monthly' = 'daily', filters: QueryReportsDto = {}) {
+    const trunc = granularity === 'monthly' ? 'month' : granularity === 'weekly' ? 'week' : 'day';
+    const needsJoin = this.needsExtractionJoin(filters);
+    const conditions = [Prisma.sql`calls.customer_id IS NOT NULL`, ...this.buildCallConditions(filters, 'calls', needsJoin ? 'ce' : undefined)];
+    const whereSql = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+    const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = calls.id` : Prisma.empty;
+
     const rows = await this.prisma.$queryRaw<Array<{ period: Date; count: bigint }>>(Prisma.sql`
-      SELECT date_trunc(${trunc}, call_date) AS period, COUNT(*)::bigint AS count
+      SELECT date_trunc(${trunc}, call_date) AS period, COUNT(DISTINCT customer_id)::bigint AS count
       FROM calls
       ${joinSql}
       ${whereSql}
@@ -139,8 +181,6 @@ export class ReportsService {
       ORDER BY period DESC
       LIMIT 90;
     `);
-    // Postgres COUNT(*) comes back as a native bigint, which JSON.stringify
-    // can't serialize -- narrow it to a number before it reaches the client.
     return rows.map((r) => ({ period: r.period, count: Number(r.count) }));
   }
 
