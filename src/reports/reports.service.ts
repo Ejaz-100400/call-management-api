@@ -11,14 +11,14 @@ export class ReportsService {
   /** Shared category/employee/date-range/vehicle/sentiment/product filter, applied consistently across every report. */
   private buildCallWhere(filters: QueryReportsDto): Prisma.CallWhereInput {
     const extractionFilter: Prisma.CallExtractionWhereInput = {
-      ...(filters.carMake && { carMake: { contains: filters.carMake, mode: 'insensitive' } }),
-      ...(filters.carModel && { carModel: { contains: filters.carModel, mode: 'insensitive' } }),
-      ...(filters.sentiment && { sentiment: filters.sentiment }),
+      ...(filters.carMake?.length && { carMake: { in: filters.carMake } }),
+      ...(filters.carModel?.length && { carModel: { in: filters.carModel } }),
+      ...(filters.sentiment?.length && { sentiment: { in: filters.sentiment } }),
     };
 
     return {
-      ...(filters.category && { businessCategory: filters.category }),
-      ...(filters.employeeId && { employeeId: filters.employeeId }),
+      ...(filters.category?.length && { businessCategory: { in: filters.category } }),
+      ...(filters.employeeId?.length && { employeeId: { in: filters.employeeId } }),
       ...((filters.dateFrom || filters.dateTo) && {
         callDate: {
           ...(filters.dateFrom && { gte: startOfDayIST(filters.dateFrom) }),
@@ -26,7 +26,7 @@ export class ReportsService {
         },
       }),
       ...(Object.keys(extractionFilter).length > 0 && { extraction: extractionFilter }),
-      ...(filters.productId && { products: { some: { productId: filters.productId } } }),
+      ...(filters.productId?.length && { products: { some: { productId: { in: filters.productId } } } }),
     };
   }
 
@@ -38,25 +38,41 @@ export class ReportsService {
    */
   private buildCallConditions(filters: QueryReportsDto, callAlias: string, extractionAlias?: string): Prisma.Sql[] {
     const conditions: Prisma.Sql[] = [];
-    if (filters.category) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.business_category = ${filters.category}::business_category`);
-    if (filters.employeeId) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.employee_id = ${filters.employeeId}::uuid`);
+    if (filters.category?.length) {
+      conditions.push(
+        Prisma.sql`${Prisma.raw(callAlias)}.business_category IN (${Prisma.join(filters.category.map((c) => Prisma.sql`${c}::business_category`))})`,
+      );
+    }
+    if (filters.employeeId?.length) {
+      conditions.push(
+        Prisma.sql`${Prisma.raw(callAlias)}.employee_id IN (${Prisma.join(filters.employeeId.map((id) => Prisma.sql`${id}::uuid`))})`,
+      );
+    }
     if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date >= ${startOfDayIST(filters.dateFrom)}`);
     if (filters.dateTo) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date < ${endOfDayIST(filters.dateTo)}`);
-    if (filters.productId) {
+    if (filters.productId?.length) {
       conditions.push(
-        Prisma.sql`EXISTS (SELECT 1 FROM call_products cpf WHERE cpf.call_id = ${Prisma.raw(callAlias)}.id AND cpf.product_id = ${filters.productId}::uuid)`,
+        Prisma.sql`EXISTS (SELECT 1 FROM call_products cpf WHERE cpf.call_id = ${Prisma.raw(callAlias)}.id AND cpf.product_id IN (${Prisma.join(filters.productId.map((id) => Prisma.sql`${id}::uuid`))}))`,
       );
     }
     if (extractionAlias) {
-      if (filters.carMake) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_make ILIKE ${'%' + filters.carMake + '%'}`);
-      if (filters.carModel) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_model ILIKE ${'%' + filters.carModel + '%'}`);
-      if (filters.sentiment) conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.sentiment = ${filters.sentiment}::sentiment_type`);
+      if (filters.carMake?.length) {
+        conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_make IN (${Prisma.join(filters.carMake.map((m) => Prisma.sql`${m}`))})`);
+      }
+      if (filters.carModel?.length) {
+        conditions.push(Prisma.sql`${Prisma.raw(extractionAlias)}.car_model IN (${Prisma.join(filters.carModel.map((m) => Prisma.sql`${m}`))})`);
+      }
+      if (filters.sentiment?.length) {
+        conditions.push(
+          Prisma.sql`${Prisma.raw(extractionAlias)}.sentiment IN (${Prisma.join(filters.sentiment.map((s) => Prisma.sql`${s}::sentiment_type`))})`,
+        );
+      }
     }
     return conditions;
   }
 
   private needsExtractionJoin(filters: QueryReportsDto): boolean {
-    return Boolean(filters.carMake || filters.carModel || filters.sentiment);
+    return Boolean(filters.carMake?.length || filters.carModel?.length || filters.sentiment?.length);
   }
 
   async summary(filters: QueryReportsDto) {
@@ -202,5 +218,71 @@ export class ReportsService {
       LIMIT ${limit};
     `);
     return rows.map((r) => ({ name: r.name, count: Number(r.count) }));
+  }
+
+  /**
+   * One row per customer, aggregated from whichever calls match the current
+   * report filters -- call count, most recent call, latest vehicle, and
+   * total stated budget are all scoped to that filtered set, not the
+   * customer's entire history, so this stays consistent with every other
+   * widget on the Reports page.
+   */
+  async customerCallHistory(filters: QueryReportsDto = {}, page = 1, pageSize = 20) {
+    const conditions = [Prisma.sql`c.customer_id IS NOT NULL`, ...this.buildCallConditions(filters, 'c', 'ce')];
+    const whereSql = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+
+    const [rows, totalRows] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{
+          customer_id: string;
+          name: string | null;
+          phone_number: string;
+          call_count: bigint;
+          last_call_date: Date;
+          total_budget: unknown;
+          latest_car_make: string | null;
+          latest_car_model: string | null;
+        }>
+      >(Prisma.sql`
+        SELECT
+          cu.id AS customer_id,
+          cu.name,
+          cu.phone_number,
+          COUNT(*)::bigint AS call_count,
+          MAX(c.call_date) AS last_call_date,
+          COALESCE(SUM(ce.budget), 0) AS total_budget,
+          (array_agg(ce.car_make ORDER BY c.call_date DESC) FILTER (WHERE ce.car_make IS NOT NULL AND ce.car_make != ''))[1] AS latest_car_make,
+          (array_agg(ce.car_model ORDER BY c.call_date DESC) FILTER (WHERE ce.car_model IS NOT NULL AND ce.car_model != ''))[1] AS latest_car_model
+        FROM calls c
+        JOIN customers cu ON cu.id = c.customer_id
+        LEFT JOIN call_extractions ce ON ce.call_id = c.id
+        ${whereSql}
+        GROUP BY cu.id, cu.name, cu.phone_number
+        ORDER BY call_count DESC, last_call_date DESC
+        LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize};
+      `),
+      this.prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`
+        SELECT COUNT(DISTINCT c.customer_id)::bigint AS total
+        FROM calls c
+        LEFT JOIN call_extractions ce ON ce.call_id = c.id
+        ${whereSql};
+      `),
+    ]);
+
+    return {
+      items: rows.map((r) => ({
+        customerId: r.customer_id,
+        name: r.name,
+        phoneNumber: r.phone_number,
+        callCount: Number(r.call_count),
+        lastCallDate: r.last_call_date,
+        totalBudget: Number(r.total_budget),
+        latestCarMake: r.latest_car_make,
+        latestCarModel: r.latest_car_model,
+      })),
+      total: Number(totalRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    };
   }
 }

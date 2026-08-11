@@ -19,14 +19,17 @@ export class CallsController {
   }
 
   // Must be registered before ':id' so these literal segments aren't matched as an id.
+  // carModel/carMake are comma-separated (multi-select scoping), matching the
+  // convention QueryCallsDto's ToArray() parses -- these two routes take a
+  // raw query string rather than a DTO, so the split happens here directly.
   @Get('car-makes')
   carMakes(@Query('carModel') carModel?: string) {
-    return this.callsService.distinctCarMakes(carModel);
+    return this.callsService.distinctCarMakes(carModel ? carModel.split(',').filter(Boolean) : undefined);
   }
 
   @Get('car-models')
   carModels(@Query('carMake') carMake?: string) {
-    return this.callsService.distinctCarModels(carMake);
+    return this.callsService.distinctCarModels(carMake ? carMake.split(',').filter(Boolean) : undefined);
   }
 
   @Get('duplicates')

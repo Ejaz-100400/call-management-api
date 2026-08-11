@@ -40,4 +40,13 @@ export class ReportsController {
   topEmployees(@Query('limit') limit: string | undefined, @Query() filters: QueryReportsDto) {
     return this.reportsService.topEmployees(limit ? Number(limit) : undefined, filters);
   }
+
+  @Get('customer-call-history')
+  customerCallHistory(
+    @Query('page') page: string | undefined,
+    @Query('pageSize') pageSize: string | undefined,
+    @Query() filters: QueryReportsDto,
+  ) {
+    return this.reportsService.customerCallHistory(filters, page ? Number(page) : undefined, pageSize ? Number(pageSize) : undefined);
+  }
 }

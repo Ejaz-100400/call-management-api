@@ -25,15 +25,15 @@ export class CallsService {
     // each one silently clobber the last, since object spread doesn't merge
     // nested keys.
     const extractionFilter: Prisma.CallExtractionWhereInput = {
-      ...(query.carMake && { carMake: { contains: query.carMake, mode: 'insensitive' } }),
-      ...(query.carModel && { carModel: { contains: query.carModel, mode: 'insensitive' } }),
-      ...(query.sentiment && { sentiment: query.sentiment }),
+      ...(query.carMake?.length && { carMake: { in: query.carMake } }),
+      ...(query.carModel?.length && { carModel: { in: query.carModel } }),
+      ...(query.sentiment?.length && { sentiment: { in: query.sentiment } }),
       ...(query.followUpRequired !== undefined && { followUpRequired: query.followUpRequired === 'true' }),
     };
 
     const where: Prisma.CallWhereInput = {
-      ...(query.category && { businessCategory: query.category }),
-      ...(query.employeeId && { employeeId: query.employeeId }),
+      ...(query.category?.length && { businessCategory: { in: query.category } }),
+      ...(query.employeeId?.length && { employeeId: { in: query.employeeId } }),
       ...((query.dateFrom || query.dateTo) && {
         callDate: {
           ...(query.dateFrom && { gte: startOfDayIST(query.dateFrom) }),
@@ -389,9 +389,9 @@ export class CallsService {
   }
 
   /** Populates the Car Make filter dropdown -- every distinct value actually on record. */
-  async distinctCarMakes(carModel?: string): Promise<string[]> {
+  async distinctCarMakes(carModel?: string[]): Promise<string[]> {
     const rows = await this.prisma.callExtraction.findMany({
-      where: { carMake: { not: null }, ...(carModel && { carModel }) },
+      where: { carMake: { not: null }, ...(carModel?.length && { carModel: { in: carModel } }) },
       distinct: ['carMake'],
       select: { carMake: true },
       orderBy: { carMake: 'asc' },
@@ -400,13 +400,14 @@ export class CallsService {
   }
 
   /**
-   * Populates the Car Model filter dropdown. Scoped to a make when one's
+   * Populates the Car Model filter dropdown. Scoped to whichever make(s) are
    * already selected, so the list doesn't offer models that can't match --
-   * otherwise every model on record.
+   * otherwise every model on record. Multiple selected makes are OR'd, e.g.
+   * models belonging to either make.
    */
-  async distinctCarModels(carMake?: string): Promise<string[]> {
+  async distinctCarModels(carMake?: string[]): Promise<string[]> {
     const rows = await this.prisma.callExtraction.findMany({
-      where: { carModel: { not: null }, ...(carMake && { carMake }) },
+      where: { carModel: { not: null }, ...(carMake?.length && { carMake: { in: carMake } }) },
       distinct: ['carModel'],
       select: { carModel: true },
       orderBy: { carModel: 'asc' },

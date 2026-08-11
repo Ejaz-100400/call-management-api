@@ -18,11 +18,11 @@ export class CustomersService {
     // rather than two separate `calls: {...}` keys (which would clobber
     // each other, since object spread doesn't merge nested keys).
     const extractionFilter: Prisma.CallExtractionWhereInput = {
-      ...(query.carMake && { carMake: { contains: query.carMake, mode: 'insensitive' } }),
-      ...(query.carModel && { carModel: { contains: query.carModel, mode: 'insensitive' } }),
+      ...(query.carMake?.length && { carMake: { in: query.carMake } }),
+      ...(query.carModel?.length && { carModel: { in: query.carModel } }),
     };
     const callFilter: Prisma.CallWhereInput = {
-      ...(query.category && { businessCategory: query.category }),
+      ...(query.category?.length && { businessCategory: { in: query.category } }),
       ...(Object.keys(extractionFilter).length > 0 && { extraction: extractionFilter }),
     };
 
@@ -98,20 +98,56 @@ export class CustomersService {
    * up in schema.sql. Exact phone-number matches aren't "duplicates" needing
    * review -- they're already the same customer by definition (phone_number
    * is unique) -- so this only surfaces name-similarity across DIFFERENT
-   * customer rows, for a human to confirm before merging. Call counts are
-   * included so the review step can show what merging would actually move.
+   * customer rows, for a human to confirm before merging. Phone similarity
+   * and each side's latest vehicle are included alongside name similarity so
+   * the review step can show *why* a pair looks like a match, not just a
+   * single blended score -- two different phone numbers with the same name
+   * and the same car is a much stronger signal than name alone.
    */
   async findDuplicates() {
     const pairs = await this.prisma.$queryRaw<
-      Array<{ id_a: string; name_a: string; id_b: string; name_b: string; similarity: number }>
+      Array<{
+        id_a: string;
+        name_a: string;
+        phone_a: string;
+        id_b: string;
+        name_b: string;
+        phone_b: string;
+        name_similarity: number;
+        phone_similarity: number;
+        car_make_a: string | null;
+        car_model_a: string | null;
+        car_make_b: string | null;
+        car_model_b: string | null;
+      }>
     >`
-      SELECT a.id AS id_a, a.name AS name_a, b.id AS id_b, b.name AS name_b,
-             similarity(a.name, b.name) AS similarity
+      SELECT a.id AS id_a, a.name AS name_a, a.phone_number AS phone_a,
+             b.id AS id_b, b.name AS name_b, b.phone_number AS phone_b,
+             similarity(a.name, b.name) AS name_similarity,
+             similarity(a.phone_number, b.phone_number) AS phone_similarity,
+             ca.car_make AS car_make_a, ca.car_model AS car_model_a,
+             cb.car_make AS car_make_b, cb.car_model AS car_model_b
       FROM customers a
       JOIN customers b ON a.id < b.id
+      LEFT JOIN LATERAL (
+        SELECT ce.car_make, ce.car_model
+        FROM calls c
+        JOIN call_extractions ce ON ce.call_id = c.id
+        WHERE c.customer_id = a.id
+        ORDER BY c.call_date DESC
+        LIMIT 1
+      ) ca ON true
+      LEFT JOIN LATERAL (
+        SELECT ce.car_make, ce.car_model
+        FROM calls c
+        JOIN call_extractions ce ON ce.call_id = c.id
+        WHERE c.customer_id = b.id
+        ORDER BY c.call_date DESC
+        LIMIT 1
+      ) cb ON true
       WHERE a.name IS NOT NULL AND b.name IS NOT NULL
         AND similarity(a.name, b.name) > 0.4
-      ORDER BY similarity DESC
+      ORDER BY similarity(a.name, b.name) DESC
       LIMIT 100;
     `;
     if (pairs.length === 0) return [];
@@ -120,11 +156,28 @@ export class CustomersService {
     const counts = await this.prisma.call.groupBy({ by: ['customerId'], where: { customerId: { in: ids } }, _count: true });
     const callCountById = new Map(counts.map((c) => [c.customerId, c._count]));
 
-    return pairs.map((p) => ({
-      ...p,
-      call_count_a: callCountById.get(p.id_a) ?? 0,
-      call_count_b: callCountById.get(p.id_b) ?? 0,
-    }));
+    return pairs.map((p) => {
+      const vehicleMatch =
+        !!p.car_make_a &&
+        !!p.car_model_a &&
+        p.car_make_a.toLowerCase() === p.car_make_b?.toLowerCase() &&
+        p.car_model_a.toLowerCase() === p.car_model_b?.toLowerCase();
+      return {
+        id_a: p.id_a,
+        name_a: p.name_a,
+        phone_a: p.phone_a,
+        id_b: p.id_b,
+        name_b: p.name_b,
+        phone_b: p.phone_b,
+        name_similarity: p.name_similarity,
+        phone_similarity: p.phone_similarity,
+        vehicle_match: vehicleMatch,
+        vehicle_a: [p.car_make_a, p.car_model_a].filter(Boolean).join(' ') || null,
+        vehicle_b: [p.car_make_b, p.car_model_b].filter(Boolean).join(' ') || null,
+        call_count_a: callCountById.get(p.id_a) ?? 0,
+        call_count_b: callCountById.get(p.id_b) ?? 0,
+      };
+    });
   }
 
   async merge(duplicateId: string, canonicalId: string) {

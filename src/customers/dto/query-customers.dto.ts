@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { ToArray } from '../../common/array-query.util';
 
 export class QueryCustomersDto {
   @IsOptional()
@@ -11,16 +12,22 @@ export class QueryCustomersDto {
   phone?: string;
 
   @IsOptional()
-  @IsString()
-  carMake?: string; // matches any of the customer's calls
+  @ToArray()
+  @IsArray()
+  @IsString({ each: true })
+  carMake?: string[]; // matches any of the customer's calls
 
   @IsOptional()
-  @IsString()
-  carModel?: string;
+  @ToArray()
+  @IsArray()
+  @IsString({ each: true })
+  carModel?: string[];
 
   @IsOptional()
-  @IsIn(['car_glasses', 'car_modifications', 'unknown'])
-  category?: 'car_glasses' | 'car_modifications' | 'unknown';
+  @ToArray()
+  @IsArray()
+  @IsIn(['car_glasses', 'car_modifications', 'unknown'], { each: true })
+  category?: ('car_glasses' | 'car_modifications' | 'unknown')[];
 
   @IsOptional()
   @Type(() => Number)

@@ -1,29 +1,42 @@
-import { IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
+import { ToArray } from '../../common/array-query.util';
 
 export class QueryReportsDto {
   @IsOptional()
-  @IsIn(['car_glasses', 'car_modifications', 'unknown'])
-  category?: 'car_glasses' | 'car_modifications' | 'unknown';
+  @ToArray()
+  @IsArray()
+  @IsIn(['car_glasses', 'car_modifications', 'unknown'], { each: true })
+  category?: ('car_glasses' | 'car_modifications' | 'unknown')[];
 
   @IsOptional()
-  @IsUUID()
-  employeeId?: string;
+  @ToArray()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  employeeId?: string[];
 
   @IsOptional()
-  @IsString()
-  carMake?: string;
+  @ToArray()
+  @IsArray()
+  @IsString({ each: true })
+  carMake?: string[];
 
   @IsOptional()
-  @IsString()
-  carModel?: string;
+  @ToArray()
+  @IsArray()
+  @IsString({ each: true })
+  carModel?: string[];
 
   @IsOptional()
-  @IsIn(['interested', 'not_interested', 'needs_follow_up'])
-  sentiment?: 'interested' | 'not_interested' | 'needs_follow_up';
+  @ToArray()
+  @IsArray()
+  @IsIn(['interested', 'not_interested', 'needs_follow_up'], { each: true })
+  sentiment?: ('interested' | 'not_interested' | 'needs_follow_up')[];
 
   @IsOptional()
-  @IsUUID()
-  productId?: string;
+  @ToArray()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  productId?: string[];
 
   @IsOptional()
   @IsDateString()

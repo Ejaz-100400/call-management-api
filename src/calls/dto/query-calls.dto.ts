@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { ToArray } from '../../common/array-query.util';
 
 export class QueryCallsDto {
   @IsOptional()
@@ -11,27 +12,37 @@ export class QueryCallsDto {
   phone?: string;
 
   @IsOptional()
-  @IsString()
-  carMake?: string;
+  @ToArray()
+  @IsArray()
+  @IsString({ each: true })
+  carMake?: string[];
 
   @IsOptional()
-  @IsString()
-  carModel?: string;
+  @ToArray()
+  @IsArray()
+  @IsString({ each: true })
+  carModel?: string[];
 
   @IsOptional()
-  @IsIn(['interested', 'not_interested', 'needs_follow_up'])
-  sentiment?: 'interested' | 'not_interested' | 'needs_follow_up';
+  @ToArray()
+  @IsArray()
+  @IsIn(['interested', 'not_interested', 'needs_follow_up'], { each: true })
+  sentiment?: ('interested' | 'not_interested' | 'needs_follow_up')[];
 
   // Query params arrive as strings -- 'true'/'false' rather than a real
   // boolean -- so the service parses this itself instead of using @Type(Boolean),
   // which would coerce any non-empty string (including "false") to true.
+  // Binary (yes/no/either), so it stays single-select -- multi-selecting both
+  // values would just mean "no filter."
   @IsOptional()
   @IsIn(['true', 'false'])
   followUpRequired?: 'true' | 'false';
 
   @IsOptional()
-  @IsIn(['car_glasses', 'car_modifications', 'unknown'])
-  category?: 'car_glasses' | 'car_modifications' | 'unknown';
+  @ToArray()
+  @IsArray()
+  @IsIn(['car_glasses', 'car_modifications', 'unknown'], { each: true })
+  category?: ('car_glasses' | 'car_modifications' | 'unknown')[];
 
   @IsOptional()
   @IsDateString()
@@ -42,8 +53,10 @@ export class QueryCallsDto {
   dateTo?: string;
 
   @IsOptional()
-  @IsUUID()
-  employeeId?: string;
+  @ToArray()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  employeeId?: string[];
 
   @IsOptional()
   @Type(() => Number)
