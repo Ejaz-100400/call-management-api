@@ -11,6 +11,34 @@ const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
 const PREVIEW_MAX_ROWS = 50;
 const PREVIEW_MAX_SHEETS = 20;
+// How many rows' independent transactions run at once during a commit --
+// bounded rather than fully unbounded since a single request can carry up
+// to 1000 rows (see CommitPhotoRowsDto's ArrayMaxSize) and every row opens
+// its own transaction against the pooled connection.
+const IMPORT_CONCURRENCY = 20;
+
+/** Runs `fn` over `items` with at most `limit` in flight at once, preserving each item's index and isolating its success/failure from the rest. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<Array<{ ok: true; value: R } | { ok: false; error: Error }>> {
+  const results: Array<{ ok: true; value: R } | { ok: false; error: Error }> = new Array(items.length);
+  let next = 0;
+
+  async function worker() {
+    for (let i = next++; i < items.length; i = next++) {
+      try {
+        results[i] = { ok: true, value: await fn(items[i], i) };
+      } catch (err) {
+        results[i] = { ok: false, error: err as Error };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 interface ParsedRow {
   phone: string;
@@ -270,47 +298,57 @@ export class ImportService {
     // re-runs the same similarity lookup against the DB from scratch.
     const vehicleCache = new Map<string, string>();
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      try {
-        const parsed: ParsedRow = {
-          // Phone number is the only field that must be filled in by the
-          // reviewer -- the DTO already validates it's non-empty here.
-          phone: row.phoneNumber.trim(),
-          // Category and call date are frequently unrecoverable from messy
-          // historical notes -- fall back to "unknown" / the import date
-          // rather than blocking the row from being saved at all.
-          category: row.businessCategory ?? 'unknown',
-          callDate: row.callDate ? new Date(row.callDate) : new Date(),
-          customerName: row.customerName?.trim() || undefined,
-          employeeId: row.employeeId,
-          duration: row.durationSeconds ?? 0,
-          carMake: row.carMake?.trim() || undefined,
-          carModel: row.carModel?.trim() || undefined,
-          carVariant: row.carVariant?.trim() || undefined,
-          location: row.location?.trim() || undefined,
-          products: (row.productsDiscussed ?? []).map((p) => p.trim()).filter(Boolean),
-          requirements: row.customerRequirements?.trim() || undefined,
-          budget: row.budget,
-          followUpRequired: row.followUpRequired ?? false,
-          followUpDate: row.followUpDate ? new Date(row.followUpDate) : undefined,
-          summary: row.summary?.trim() || undefined,
-          sentiment: row.sentiment,
-        };
-        await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId, vehicleCache));
+    // Each row is its own independent transaction, so there's no reason to
+    // wait for one to finish before starting the next -- running them
+    // concurrently (bounded by IMPORT_CONCURRENCY) overlaps the several
+    // round trips each row makes (customer upsert, call create, vehicle
+    // similarity lookups, ...) instead of paying for every one of them
+    // serially, which is most of where the time goes importing a few
+    // hundred rows against a remote/pooled Postgres connection.
+    const settled = await mapWithConcurrency(rows, IMPORT_CONCURRENCY, async (row) => {
+      const parsed: ParsedRow = {
+        // Phone number is the only field that must be filled in by the
+        // reviewer -- the DTO already validates it's non-empty here.
+        phone: row.phoneNumber.trim(),
+        // Category and call date are frequently unrecoverable from messy
+        // historical notes -- fall back to "unknown" / the import date
+        // rather than blocking the row from being saved at all.
+        category: row.businessCategory ?? 'unknown',
+        callDate: row.callDate ? new Date(row.callDate) : new Date(),
+        customerName: row.customerName?.trim() || undefined,
+        employeeId: row.employeeId,
+        duration: row.durationSeconds ?? 0,
+        carMake: row.carMake?.trim() || undefined,
+        carModel: row.carModel?.trim() || undefined,
+        carVariant: row.carVariant?.trim() || undefined,
+        location: row.location?.trim() || undefined,
+        products: (row.productsDiscussed ?? []).map((p) => p.trim()).filter(Boolean),
+        requirements: row.customerRequirements?.trim() || undefined,
+        budget: row.budget,
+        followUpRequired: row.followUpRequired ?? false,
+        followUpDate: row.followUpDate ? new Date(row.followUpDate) : undefined,
+        summary: row.summary?.trim() || undefined,
+        sentiment: row.sentiment,
+      };
+      await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId, vehicleCache));
+      return {
+        customerName: parsed.customerName,
+        phoneNumber: parsed.phone,
+        businessCategory: parsed.category,
+        callDate: parsed.callDate,
+        location: parsed.location,
+      };
+    });
+
+    settled.forEach((s, i) => {
+      if (s.ok) {
         result.imported++;
-        result.importedRows.push({
-          customerName: parsed.customerName,
-          phoneNumber: parsed.phone,
-          businessCategory: parsed.category,
-          callDate: parsed.callDate,
-          location: parsed.location,
-        });
-      } catch (err) {
+        result.importedRows.push(s.value);
+      } else {
         result.skipped++;
-        result.errors.push({ row: i + 1, reason: (err as Error).message });
+        result.errors.push({ row: i + 1, reason: s.error.message });
       }
-    }
+    });
 
     return result;
   }
