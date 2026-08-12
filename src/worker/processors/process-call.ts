@@ -3,6 +3,7 @@ import type { CallProcessingJob } from '../../queue/queue.service';
 import { linkDiscussedProducts } from '../../common/product-matching.util';
 import { defaultFollowUpDueDate } from '../../follow-ups/follow-up.util';
 import { extractCallInfo } from '../providers/ai.provider';
+import { fetchExotelCallDetails } from '../providers/exotel.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
 import { transcribeAudio } from '../providers/stt.provider';
 
@@ -14,14 +15,35 @@ export async function processCallJob(job: CallProcessingJob): Promise<void> {
   if (job.type === 'regenerate_summary') {
     return regenerateSummary(job.callId);
   }
-  return fullReprocess(job.callId, job.recordingUrl);
+  return fullReprocess(job.callId, job.recordingUrl, job.callSid);
 }
 
-async function fullReprocess(callId: string, recordingUrl?: string) {
+async function fullReprocess(callId: string, recordingUrl?: string, callSid?: string) {
   const call = await prisma.call.findUniqueOrThrow({ where: { id: callId } });
 
   try {
     await prisma.call.update({ where: { id: callId }, data: { status: 'processing' } });
+
+    // Exotel's webhook only gives us a CallSid, not the recording -- look up
+    // the real call details (recording URL, duration, start time) now. The
+    // recording isn't always ready the instant the call ends, so a missing
+    // RecordingUrl here throws (rather than silently proceeding with no
+    // audio); BullMQ's existing retry/backoff on this job picks it up again
+    // a few seconds later instead of this needing its own polling loop.
+    if (!recordingUrl && callSid) {
+      const details = await fetchExotelCallDetails(callSid);
+      if (!details.recordingUrl) {
+        throw new Error(`Exotel call ${callSid} has no recording URL yet (status: ${details.status})`);
+      }
+      recordingUrl = details.recordingUrl;
+      await prisma.call.update({
+        where: { id: callId },
+        data: {
+          durationSeconds: details.durationSeconds,
+          ...(details.startTime && { callDate: details.startTime }),
+        },
+      });
+    }
 
     let audioBuffer: Buffer;
     let storageKey = call.recordingStorageKey;

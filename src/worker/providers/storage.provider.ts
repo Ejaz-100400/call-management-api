@@ -1,5 +1,6 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { exotelRecordingAuthHeader } from './exotel.provider';
 
 const s3 = new S3Client({
   region: 'auto',
@@ -12,13 +13,15 @@ const s3 = new S3Client({
 
 const BUCKET = process.env.R2_BUCKET!;
 
-/** Fetches a call recording from the telephony provider's (usually temporary) URL. */
+/**
+ * Fetches a call recording from the telephony provider's (usually temporary)
+ * URL. Exotel's recording URLs aren't publicly fetchable -- they require the
+ * same Basic Auth (API Key/Token) as the rest of Exotel's API. Sending that
+ * header is harmless for providers that don't need it (a plain 404/200 GET
+ * ignores unrecognized auth), so this doesn't need to branch per-provider.
+ */
 export async function fetchFromProviderUrl(url: string): Promise<Buffer> {
-  // TODO: some providers require an Authorization header on their recording
-  // URLs (Exotel does, for example) -- add that here once you're integrating
-  // a real provider. Something like:
-  //   const res = await fetch(url, { headers: { Authorization: `Bearer ${process.env.TELEPHONY_API_KEY}` } });
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: exotelRecordingAuthHeader() });
   if (!res.ok) throw new Error(`Failed to fetch recording from provider: ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }

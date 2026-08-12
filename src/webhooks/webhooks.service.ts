@@ -13,34 +13,35 @@ export class WebhooksService {
   ) {}
 
   async handleCallCompleted(payload: Record<string, unknown>) {
-    // NOTE: the field names below (CallSid, From, To, StartTime, Duration,
-    // RecordingUrl) are placeholders. Exotel/Ozonetel/Knowlarity/Twilio each
-    // use a different webhook payload shape -- swap these for whatever your
-    // provider actually sends.
+    // Exotel's Passthru applet (confirmed against its own docs) only sends
+    // CallSid/CallFrom/CallTo/Direction/CurrentTime/DialWhomNumber -- notably
+    // NOT recording URL, duration, or final status. Those only come from a
+    // separate Call Details lookup made after the fact using CallSid, which
+    // the worker does once it picks up the job (see exotel.provider.ts and
+    // process-call.ts) -- the recording usually isn't finalized the instant
+    // the call ends anyway.
     this.logger.log(`Received call-completed webhook: ${JSON.stringify(payload)}`);
 
-    const callerPhone = (payload.From as string | undefined)?.trim();
+    const callSid = payload.CallSid as string | undefined;
+    const callerPhone = (payload.CallFrom as string | undefined)?.trim();
     const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
 
     const call = await this.prisma.call.create({
       data: {
-        externalCallId: (payload.CallSid as string) ?? undefined,
-        businessCategory: this.resolveCategory(payload.To as string),
+        externalCallId: callSid ?? undefined,
+        businessCategory: this.resolveCategory(payload.CallTo as string),
         customerId: customer?.id,
-        callDate: payload.StartTime ? new Date(payload.StartTime as string) : new Date(),
-        durationSeconds: Number(payload.Duration ?? 0),
+        callDate: payload.CurrentTime ? new Date(payload.CurrentTime as string) : new Date(),
+        durationSeconds: 0, // corrected once the worker fetches real call details
         recordingStorageKey: null, // filled in once the worker uploads it to object storage
         status: 'pending',
       },
     });
 
-    // The provider's RecordingUrl is typically temporary -- pass it straight
-    // into the job rather than storing it, so the worker fetches it once and
-    // moves it into permanent object storage.
     await this.queue.enqueueCallProcessing({
       type: 'full_reprocess',
       callId: call.id,
-      recordingUrl: payload.RecordingUrl as string | undefined,
+      callSid,
     });
 
     return { received: true, callId: call.id };

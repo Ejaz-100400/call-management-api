@@ -81,6 +81,12 @@ services:
         sync: false
       - key: R2_BUCKET
         sync: false
+      - key: EXOTEL_ACCOUNT_SID
+        sync: false
+      - key: EXOTEL_API_KEY
+        sync: false
+      - key: EXOTEL_API_TOKEN
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis

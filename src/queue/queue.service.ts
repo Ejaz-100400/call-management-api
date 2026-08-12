@@ -5,7 +5,10 @@ import IORedis from 'ioredis';
 export const CALL_PROCESSING_QUEUE = 'call-processing';
 
 export type CallProcessingJob =
-  | { type: 'full_reprocess'; callId: string; recordingUrl?: string }
+  // recordingUrl is used directly when already known; callSid is used when
+  // the provider (Exotel) only gives us a call identifier up front and the
+  // worker has to look up the recording URL itself once it's ready.
+  | { type: 'full_reprocess'; callId: string; recordingUrl?: string; callSid?: string }
   | { type: 'regenerate_summary'; callId: string };
 
 /**
