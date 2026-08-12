@@ -373,11 +373,26 @@ export class ImportService {
 
     const rows: ParsedExcelRow[] = [];
     const errors: Array<{ row: number; reason: string }> = [];
-    const lastRow = Math.min(sheet.rowCount, MAX_ROWS + 1);
+    let dataRows = 0;
+    let cutoffRow: number | null = null;
 
-    for (let rowNumber = 2; rowNumber <= lastRow; rowNumber++) {
-      const row = sheet.getRow(rowNumber);
-      if (this.isBlankRow(row, cols)) continue;
+    // eachRow() (without includeEmpty) only visits rows ExcelJS itself
+    // considers to have real content, skipping the -- surprisingly common --
+    // case of trailing rows that only carry leftover formatting (borders,
+    // fill color from a big copy-paste) with no actual values. Walking those
+    // via a plain row-number loop instead used to both flood the errors list
+    // with meaningless entries and, for some files, crash outright deep
+    // inside ExcelJS when it tried to materialize a cell for a column that
+    // was never really defined on that phantom row.
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || cutoffRow !== null) return;
+      if (this.isBlankRow(row, cols)) return;
+
+      dataRows++;
+      if (dataRows > MAX_ROWS) {
+        cutoffRow = rowNumber;
+        return;
+      }
 
       try {
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
@@ -404,12 +419,12 @@ export class ImportService {
       } catch (err) {
         errors.push({ row: rowNumber, reason: (err as Error).message });
       }
-    }
+    });
 
-    if (sheet.rowCount > MAX_ROWS + 1) {
+    if (cutoffRow !== null) {
       errors.push({
-        row: MAX_ROWS + 2,
-        reason: `File has more than ${MAX_ROWS} data rows -- everything after row ${MAX_ROWS + 1} was not processed. Split the file and re-upload the rest.`,
+        row: cutoffRow,
+        reason: `File has more than ${MAX_ROWS} data rows -- this row onward was not processed. Split the file and re-upload the rest.`,
       });
     }
 
