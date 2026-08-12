@@ -10,6 +10,7 @@ import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } 
 const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
 const PREVIEW_MAX_ROWS = 50;
+const PREVIEW_MAX_SHEETS = 20;
 
 interface ParsedRow {
   phone: string;
@@ -76,10 +77,18 @@ export interface RawSheetPreview {
   totalDataRows: number;
 }
 
+export interface SheetPreview {
+  name: string;
+  preview: RawSheetPreview;
+}
+
 export interface ParseExcelResult {
   rows: ParsedExcelRow[];
   errors: Array<{ row: number; reason: string }>;
-  rawPreview: RawSheetPreview;
+  // Every sheet in the workbook, not just the one actually imported (always
+  // sheets[0] -- see parseExcel) -- lets the frontend show tabs like Excel
+  // does so the user can flip through and confirm data is where expected.
+  sheets: SheetPreview[];
 }
 
 export interface PhotoExtractResult {
@@ -342,11 +351,15 @@ export class ImportService {
     const sheet = workbook.worksheets[0];
     if (!sheet) throw new BadRequestException('No worksheet found in this file.');
 
-    // Literal grid of the uploaded sheet (raw header/cell text, not mapped to
-    // our internal fields) -- lets the frontend show a real "how Excel looks"
-    // preview so the user can visually confirm it's the right file before the
-    // rows below get matched against our schema.
-    const rawPreview = this.buildRawPreview(sheet);
+    // Literal grid of every sheet (raw header/cell text, not mapped to our
+    // internal fields) -- lets the frontend show a real "how Excel looks"
+    // preview, tabs included, so the user can visually confirm it's the
+    // right file/sheet before the rows below get matched against our schema.
+    // Only sheets[0] (this same `sheet`) is actually parsed into `rows` --
+    // the rest are for viewing only.
+    const sheets: SheetPreview[] = workbook.worksheets
+      .slice(0, PREVIEW_MAX_SHEETS)
+      .map((ws) => ({ name: ws.name, preview: this.buildRawPreview(ws) }));
 
     const columnMap = this.buildColumnMap(sheet.getRow(1));
     const cols = this.resolveColumns(columnMap);
@@ -400,7 +413,7 @@ export class ImportService {
       });
     }
 
-    return { rows, errors, rawPreview };
+    return { rows, errors, sheets };
   }
 
   private buildRawPreview(sheet: ExcelJS.Worksheet): RawSheetPreview {
