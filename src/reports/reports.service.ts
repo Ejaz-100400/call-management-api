@@ -141,11 +141,11 @@ export class ReportsService {
     const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = calls.id` : Prisma.empty;
 
     const rows = await this.prisma.$queryRaw<Array<{ period: Date; business_category: BusinessCategory; count: bigint }>>(Prisma.sql`
-      SELECT date_trunc(${trunc}, call_date) AS period, business_category, COUNT(*)::bigint AS count
+      SELECT date_trunc(${trunc}, calls.call_date) AS period, calls.business_category, COUNT(*)::bigint AS count
       FROM calls
       ${joinSql}
       ${whereSql}
-      GROUP BY period, business_category
+      GROUP BY period, calls.business_category
       ORDER BY period DESC;
     `);
 
