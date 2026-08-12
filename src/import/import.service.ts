@@ -444,14 +444,6 @@ export class ImportService {
       try {
         if (this.isBlankRow(row, cols)) continue;
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
-        // Unlike photo-scan (where "can't tell from handwriting" genuinely
-        // means Unknown), a spreadsheet row with no recognizable category is
-        // almost always a data-entry gap -- exclude it rather than import it
-        // silently as Unknown.
-        if (parsed.category === 'unknown') {
-          errors.push({ row: rowNumber, reason: 'Business category is Unknown -- row skipped.' });
-          continue;
-        }
         rows.push({
           sourceRow: rowNumber,
           phoneNumber: parsed.phone,
