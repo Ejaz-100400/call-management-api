@@ -9,6 +9,7 @@ import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } 
 
 const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
+const PREVIEW_MAX_ROWS = 50;
 
 interface ParsedRow {
   phone: string;
@@ -69,9 +70,16 @@ export interface ParsedExcelRow {
   sentiment?: SentimentType;
 }
 
+export interface RawSheetPreview {
+  headers: string[];
+  rows: string[][];
+  totalDataRows: number;
+}
+
 export interface ParseExcelResult {
   rows: ParsedExcelRow[];
   errors: Array<{ row: number; reason: string }>;
+  rawPreview: RawSheetPreview;
 }
 
 export interface PhotoExtractResult {
@@ -334,6 +342,12 @@ export class ImportService {
     const sheet = workbook.worksheets[0];
     if (!sheet) throw new BadRequestException('No worksheet found in this file.');
 
+    // Literal grid of the uploaded sheet (raw header/cell text, not mapped to
+    // our internal fields) -- lets the frontend show a real "how Excel looks"
+    // preview so the user can visually confirm it's the right file before the
+    // rows below get matched against our schema.
+    const rawPreview = this.buildRawPreview(sheet);
+
     const columnMap = this.buildColumnMap(sheet.getRow(1));
     const cols = this.resolveColumns(columnMap);
     if (!cols.phone) {
@@ -386,7 +400,38 @@ export class ImportService {
       });
     }
 
-    return { rows, errors };
+    return { rows, errors, rawPreview };
+  }
+
+  private buildRawPreview(sheet: ExcelJS.Worksheet): RawSheetPreview {
+    const colCount = Math.max(sheet.actualColumnCount, 1);
+    const headerRow = sheet.getRow(1);
+    const headers: string[] = [];
+    for (let c = 1; c <= colCount; c++) headers.push(this.cellPreviewText(headerRow.getCell(c)));
+
+    // Blank rows are kept (unlike the real parse below, which skips them) --
+    // this is a literal "what does row N actually look like" preview, so row
+    // numbers need to line up with the file exactly the way Excel shows them.
+    const lastPreviewRow = Math.min(sheet.rowCount, PREVIEW_MAX_ROWS + 1);
+    const rows: string[][] = [];
+    for (let r = 2; r <= lastPreviewRow; r++) {
+      const row = sheet.getRow(r);
+      const cells: string[] = [];
+      for (let c = 1; c <= colCount; c++) cells.push(this.cellPreviewText(row.getCell(c)));
+      rows.push(cells);
+    }
+
+    return { headers, rows, totalDataRows: Math.max(sheet.rowCount - 1, 0) };
+  }
+
+  /** Best-effort plain-text rendering of a cell for the raw preview grid -- display only, never fed back into parseRow(). */
+  private cellPreviewText(cell: ExcelJS.Cell): string {
+    if (cell.value == null) return '';
+    if (cell.type === ExcelJS.ValueType.Date) {
+      const d = cell.value as Date;
+      return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+    }
+    return (cell.text ?? '').toString().trim();
   }
 
   private buildColumnMap(headerRow: ExcelJS.Row): Map<string, number> {
