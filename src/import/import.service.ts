@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -67,6 +67,7 @@ export interface ImportResult {
 }
 
 export interface ImportedRowSummary {
+  callId: string;
   customerName?: string;
   phoneNumber: string;
   businessCategory: BusinessCategory;
@@ -246,6 +247,28 @@ export class ImportService {
   }
 
   /**
+   * Undoes one import batch entirely -- deletes every Call this specific
+   * history entry created (cascading to its extraction/transcript/
+   * follow-ups/product links) and removes the history entry itself.
+   * Entries recorded before callId was tracked on each row have nothing to
+   * delete here -- Calls -> Find Duplicates is the fallback for those.
+   */
+  async deleteImportBatch(auditLogId: string) {
+    const entry = await this.prisma.auditLog.findUnique({ where: { id: auditLogId } });
+    if (!entry || entry.action !== 'import_historical_calls') {
+      throw new NotFoundException('Import history entry not found');
+    }
+
+    const rows = ((entry.details as { rows?: ImportedRowSummary[] } | null)?.rows ?? []) as ImportedRowSummary[];
+    const callIds = rows.map((r) => r.callId).filter((id): id is string => Boolean(id));
+
+    const deleted = callIds.length > 0 ? await this.prisma.call.deleteMany({ where: { id: { in: callIds } } }) : { count: 0 };
+    await this.prisma.auditLog.delete({ where: { id: auditLogId } });
+
+    return { deletedCalls: deleted.count };
+  }
+
+  /**
    * Reads photos of handwritten notes via Claude vision and returns the raw
    * extraction for the caller to review/edit -- nothing is persisted here.
    * A small concurrency limit keeps wall-clock time reasonable for a batch
@@ -330,8 +353,9 @@ export class ImportService {
         summary: row.summary?.trim() || undefined,
         sentiment: row.sentiment,
       };
-      await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId, vehicleCache));
+      const callId = await this.prisma.$transaction((tx) => this.persistRow(tx, parsed, userId, vehicleCache));
       return {
+        callId,
         customerName: parsed.customerName,
         phoneNumber: parsed.phone,
         businessCategory: parsed.category,
@@ -655,6 +679,8 @@ export class ImportService {
     if (data.products.length > 0) {
       await linkDiscussedProducts(tx, call.id, data.category, data.products);
     }
+
+    return call.id;
   }
 
   /**

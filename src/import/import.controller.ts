@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Get, Post, Res, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Res, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { User } from '@prisma/client';
 import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { CommitPhotoRowsDto } from './dto/commit-photo-rows.dto';
 import { RecordImportHistoryDto } from './dto/record-import-history.dto';
 import { ImportService } from './import.service';
@@ -28,6 +29,12 @@ export class ImportController {
   @Get('calls/history')
   history() {
     return this.importService.history();
+  }
+
+  @Delete('calls/history/:id')
+  @Roles('admin')
+  deleteHistory(@Param('id', ParseUUIDPipe) id: string) {
+    return this.importService.deleteImportBatch(id);
   }
 
   @Post('calls')

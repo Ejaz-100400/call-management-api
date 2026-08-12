@@ -1,8 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, ValidateNested } from 'class-validator';
 import { BusinessCategory } from '@prisma/client';
 
 class ImportedRowSummaryDto {
+  @IsUUID()
+  callId: string;
+
   @IsOptional()
   @IsString()
   customerName?: string;
