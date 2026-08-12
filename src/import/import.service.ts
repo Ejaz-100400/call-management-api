@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
 import { linkDiscussedProducts } from '../common/product-matching.util';
+import { inferCarMakeFromModel } from '../common/car-make-lookup';
 import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
 import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } from './ocr.provider';
 
@@ -410,17 +411,9 @@ export class ImportService {
       throw new BadRequestException('Could not read this file -- please upload a valid .xlsx file.');
     }
 
-    // Literal grid of every sheet (raw header/cell text, not mapped to our
-    // internal fields) -- lets the frontend show a real "how Excel looks"
-    // preview, tabs included, so the user can visually confirm it's the
-    // right file/sheet before the rows below get matched against our schema.
-    const sheets: SheetPreview[] = workbook.worksheets
-      .slice(0, PREVIEW_MAX_SHEETS)
-      .map((ws) => ({ name: ws.name, preview: this.buildRawPreview(ws) }));
-
     // sheetIndex picks which sheet actually gets parsed into `rows` -- the
     // caller (frontend) defaults to 0 but lets the user switch to any sheet
-    // shown in `sheets` above and re-parse that one instead.
+    // shown in `sheets` below and re-parse that one instead.
     const sheet = workbook.worksheets[sheetIndex];
     if (!sheet) throw new BadRequestException('That sheet was not found in this file.');
 
@@ -429,6 +422,19 @@ export class ImportService {
     if (!cols.phone) {
       throw new BadRequestException('Could not find the required Phone Number column. Please use the provided template.');
     }
+
+    // Literal grid of every sheet (raw header/cell text, not mapped to our
+    // internal fields) -- lets the frontend show a real "how Excel looks"
+    // preview, tabs included, so the user can visually confirm it's the
+    // right file/sheet before the rows below get matched against our schema.
+    // Only the active sheet gets `cols` passed in, since that's the only one
+    // whose columns were just resolved against our template -- it lets that
+    // one sheet's grid show the same inferred/defaulted Car Make a blank
+    // cell will actually be imported with (see buildRawPreview), instead of
+    // just the raw blank.
+    const sheets: SheetPreview[] = workbook.worksheets
+      .slice(0, PREVIEW_MAX_SHEETS)
+      .map((ws, i) => ({ name: ws.name, preview: this.buildRawPreview(ws, i === sheetIndex ? cols : undefined) }));
 
     const employees = await this.prisma.employee.findMany({ where: { active: true } });
     const employeesByEmail = new Map(employees.filter((e) => e.email).map((e) => [e.email!.toLowerCase(), e.id]));
@@ -485,7 +491,14 @@ export class ImportService {
     return { rows, errors, sheets };
   }
 
-  private buildRawPreview(sheet: ExcelJS.Worksheet): RawSheetPreview {
+  /**
+   * `cols` is only passed for the sheet that's actually being imported
+   * (parseExcel resolves it against that one sheet's headers) -- when
+   * present, a blank Car Make cell in the grid is filled in with what will
+   * actually be imported (inferred from Car Model, or "Unknown"), so the
+   * preview doesn't show blanks that are about to become real values.
+   */
+  private buildRawPreview(sheet: ExcelJS.Worksheet, cols?: ReturnType<ImportService['resolveColumns']>): RawSheetPreview {
     const colCount = Math.max(sheet.actualColumnCount, 1);
     const headerRow = sheet.getRow(1);
     const headers: string[] = [];
@@ -500,6 +513,15 @@ export class ImportService {
       const row = sheet.getRow(r);
       const cells: string[] = [];
       for (let c = 1; c <= colCount; c++) cells.push(this.cellPreviewText(row.getCell(c)));
+
+      if (cols?.carMake) {
+        const makeIdx = cols.carMake - 1;
+        if (makeIdx < cells.length && !cells[makeIdx]) {
+          const rawModel = cols.carModel && cols.carModel - 1 < cells.length ? cells[cols.carModel - 1] : '';
+          cells[makeIdx] = (rawModel && inferCarMakeFromModel(rawModel)) || 'Unknown';
+        }
+      }
+
       rows.push(cells);
     }
 
@@ -595,6 +617,14 @@ export class ImportService {
     const budgetRaw = cols.budget ? this.cellText(row.getCell(cols.budget).value) : '';
     const budget = budgetRaw ? Number(budgetRaw.replace(/[^0-9.]/g, '')) : undefined;
 
+    const carModel = cols.carModel ? this.cellText(row.getCell(cols.carModel).value) || undefined : undefined;
+    const rawCarMake = cols.carMake ? this.cellText(row.getCell(cols.carMake).value) || undefined : undefined;
+    // A blank Car Make with a Car Model present is inferred (e.g. "Swift" ->
+    // "Maruti Suzuki"); a blank Car Make with nothing to infer from falls
+    // back to "Unknown" rather than staying blank -- matches what the sheet
+    // preview grid already shows for this same cell (see buildRawPreview).
+    const carMake = rawCarMake ?? (carModel ? inferCarMakeFromModel(carModel) : undefined) ?? 'Unknown';
+
     return {
       phone,
       category,
@@ -602,8 +632,8 @@ export class ImportService {
       customerName: cols.customerName ? this.cellText(row.getCell(cols.customerName).value) || undefined : undefined,
       employeeId,
       duration: cols.duration ? Number(this.cellText(row.getCell(cols.duration).value)) || 0 : 0,
-      carMake: cols.carMake ? this.cellText(row.getCell(cols.carMake).value) || undefined : undefined,
-      carModel: cols.carModel ? this.cellText(row.getCell(cols.carModel).value) || undefined : undefined,
+      carMake,
+      carModel,
       carVariant: cols.carVariant ? this.cellText(row.getCell(cols.carVariant).value) || undefined : undefined,
       location: cols.location ? this.cellText(row.getCell(cols.location).value) || undefined : undefined,
       products,
