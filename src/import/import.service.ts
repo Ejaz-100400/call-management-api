@@ -12,11 +12,14 @@ const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
 const PREVIEW_MAX_ROWS = 50;
 const PREVIEW_MAX_SHEETS = 20;
-// How many rows' independent transactions run at once during a commit --
-// bounded rather than fully unbounded since a single request can carry up
-// to 1000 rows (see CommitPhotoRowsDto's ArrayMaxSize) and every row opens
-// its own transaction against the pooled connection.
-const IMPORT_CONCURRENCY = 20;
+// How many rows' independent transactions run at once during a commit.
+// Each one holds a real DB connection for its whole duration, and Prisma's
+// default pool size (derived from CPU count) is small on a typical Render
+// instance -- 20 was too aggressive and started throwing "Unable to start a
+// transaction in the given time" once the pool filled up. 5 still overlaps
+// meaningfully more than the fully-serial original while staying well
+// within reach of a small pool.
+const IMPORT_CONCURRENCY = 5;
 
 /** Runs `fn` over `items` with at most `limit` in flight at once, preserving each item's index and isolating its success/failure from the rest. */
 async function mapWithConcurrency<T, R>(
