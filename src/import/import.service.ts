@@ -373,28 +373,13 @@ export class ImportService {
 
     const rows: ParsedExcelRow[] = [];
     const errors: Array<{ row: number; reason: string }> = [];
-    let dataRows = 0;
-    let cutoffRow: number | null = null;
+    const lastRow = Math.min(sheet.rowCount, MAX_ROWS + 1);
 
-    // eachRow() (without includeEmpty) only visits rows ExcelJS itself
-    // considers to have real content, skipping the -- surprisingly common --
-    // case of trailing rows that only carry leftover formatting (borders,
-    // fill color from a big copy-paste) with no actual values. Walking those
-    // via a plain row-number loop instead used to both flood the errors list
-    // with meaningless entries and, for some files, crash outright deep
-    // inside ExcelJS when it tried to materialize a cell for a column that
-    // was never really defined on that phantom row.
-    sheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1 || cutoffRow !== null) return;
-      if (this.isBlankRow(row, cols)) return;
-
-      dataRows++;
-      if (dataRows > MAX_ROWS) {
-        cutoffRow = rowNumber;
-        return;
-      }
+    for (let rowNumber = 2; rowNumber <= lastRow; rowNumber++) {
+      const row = sheet.getRow(rowNumber);
 
       try {
+        if (this.isBlankRow(row, cols)) continue;
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
         rows.push({
           sourceRow: rowNumber,
@@ -417,14 +402,20 @@ export class ImportService {
           sentiment: parsed.sentiment,
         });
       } catch (err) {
+        // Trailing rows that only carry leftover formatting (borders/fill
+        // from a big copy-paste, no real values) can trip an internal
+        // ExcelJS error when it tries to read a cell that was never really
+        // written -- there's nothing to import there, so skip silently
+        // instead of showing a meaningless "row issue" for an empty row.
+        if ((err as Error).message === 'A Cell needs a Row') continue;
         errors.push({ row: rowNumber, reason: (err as Error).message });
       }
-    });
+    }
 
-    if (cutoffRow !== null) {
+    if (sheet.rowCount > MAX_ROWS + 1) {
       errors.push({
-        row: cutoffRow,
-        reason: `File has more than ${MAX_ROWS} data rows -- this row onward was not processed. Split the file and re-upload the rest.`,
+        row: MAX_ROWS + 2,
+        reason: `File has more than ${MAX_ROWS} data rows -- everything after row ${MAX_ROWS + 1} was not processed. Split the file and re-upload the rest.`,
       });
     }
 
@@ -516,9 +507,12 @@ export class ImportService {
     if (!phone) throw new Error('Missing phone number');
 
     // Category and call date are frequently unrecoverable from messy
-    // historical records -- default rather than skip the row over them.
-    const callDate = this.parseDate(row.getCell(cols.callDate!).value) ?? new Date();
-    const category = this.parseCategory(this.cellText(row.getCell(cols.category!).value)) ?? 'unknown';
+    // historical records -- and the column itself may not even exist in a
+    // given file -- so default rather than throw either way.
+    const callDate = cols.callDate ? (this.parseDate(row.getCell(cols.callDate).value) ?? new Date()) : new Date();
+    const category = cols.category
+      ? (this.parseCategory(this.cellText(row.getCell(cols.category).value)) ?? 'unknown')
+      : 'unknown';
 
     const employeeRaw = cols.employee ? this.cellText(row.getCell(cols.employee).value) : '';
     const employeeId = employeeRaw
