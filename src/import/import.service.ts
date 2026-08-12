@@ -402,7 +402,7 @@ export class ImportService {
    * persisting anything -- mirrors the photo-scan extract phase so both
    * import paths share the same review-then-batch-commit flow.
    */
-  async parseExcel(buffer: Buffer): Promise<ParseExcelResult> {
+  async parseExcel(buffer: Buffer, sheetIndex = 0): Promise<ParseExcelResult> {
     const workbook = new ExcelJS.Workbook();
     try {
       await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
@@ -410,18 +410,19 @@ export class ImportService {
       throw new BadRequestException('Could not read this file -- please upload a valid .xlsx file.');
     }
 
-    const sheet = workbook.worksheets[0];
-    if (!sheet) throw new BadRequestException('No worksheet found in this file.');
-
     // Literal grid of every sheet (raw header/cell text, not mapped to our
     // internal fields) -- lets the frontend show a real "how Excel looks"
     // preview, tabs included, so the user can visually confirm it's the
     // right file/sheet before the rows below get matched against our schema.
-    // Only sheets[0] (this same `sheet`) is actually parsed into `rows` --
-    // the rest are for viewing only.
     const sheets: SheetPreview[] = workbook.worksheets
       .slice(0, PREVIEW_MAX_SHEETS)
       .map((ws) => ({ name: ws.name, preview: this.buildRawPreview(ws) }));
+
+    // sheetIndex picks which sheet actually gets parsed into `rows` -- the
+    // caller (frontend) defaults to 0 but lets the user switch to any sheet
+    // shown in `sheets` above and re-parse that one instead.
+    const sheet = workbook.worksheets[sheetIndex];
+    if (!sheet) throw new BadRequestException('That sheet was not found in this file.');
 
     const columnMap = this.buildColumnMap(sheet.getRow(1));
     const cols = this.resolveColumns(columnMap);
@@ -443,6 +444,14 @@ export class ImportService {
       try {
         if (this.isBlankRow(row, cols)) continue;
         const parsed = this.parseRow(row, cols, employeesByEmail, employeesByName);
+        // Unlike photo-scan (where "can't tell from handwriting" genuinely
+        // means Unknown), a spreadsheet row with no recognizable category is
+        // almost always a data-entry gap -- exclude it rather than import it
+        // silently as Unknown.
+        if (parsed.category === 'unknown') {
+          errors.push({ row: rowNumber, reason: 'Business category is Unknown -- row skipped.' });
+          continue;
+        }
         rows.push({
           sourceRow: rowNumber,
           phoneNumber: parsed.phone,

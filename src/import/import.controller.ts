@@ -39,9 +39,9 @@ export class ImportController {
 
   @Post('calls')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
-  async parseCalls(@UploadedFile() file: Express.Multer.File) {
+  async parseCalls(@UploadedFile() file: Express.Multer.File, @Body('sheetIndex') sheetIndex?: string) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return this.importService.parseExcel(file.buffer);
+    return this.importService.parseExcel(file.buffer, sheetIndex ? Number(sheetIndex) : 0);
   }
 
   @Post('photos/extract')
