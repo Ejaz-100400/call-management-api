@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
 import { linkDiscussedProducts } from '../common/product-matching.util';
-import { inferCarMakeFromModel } from '../common/car-make-lookup';
+import { splitMakeAndModel } from '../common/car-make-lookup';
 import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
 import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } from './ocr.provider';
 
@@ -516,9 +516,17 @@ export class ImportService {
 
       if (cols?.carMake) {
         const makeIdx = cols.carMake - 1;
+        const modelIdx = cols.carModel ? cols.carModel - 1 : -1;
         if (makeIdx < cells.length && !cells[makeIdx]) {
-          const rawModel = cols.carModel && cols.carModel - 1 < cells.length ? cells[cols.carModel - 1] : '';
-          cells[makeIdx] = (rawModel && inferCarMakeFromModel(rawModel)) || 'Unknown';
+          const rawModel = modelIdx >= 0 && modelIdx < cells.length ? cells[modelIdx] : '';
+          const split = rawModel ? splitMakeAndModel(rawModel) : {};
+          cells[makeIdx] = split.make ?? 'Unknown';
+          // The model cell may have actually held "Make Model" combined
+          // (e.g. "Toyota Innova") or just a make with no real model --
+          // trim it down to the model-only text this same split produced.
+          if (modelIdx >= 0 && modelIdx < cells.length && rawModel) {
+            cells[modelIdx] = split.model ?? '';
+          }
         }
       }
 
@@ -617,13 +625,17 @@ export class ImportService {
     const budgetRaw = cols.budget ? this.cellText(row.getCell(cols.budget).value) : '';
     const budget = budgetRaw ? Number(budgetRaw.replace(/[^0-9.]/g, '')) : undefined;
 
-    const carModel = cols.carModel ? this.cellText(row.getCell(cols.carModel).value) || undefined : undefined;
+    const rawCarModel = cols.carModel ? this.cellText(row.getCell(cols.carModel).value) || undefined : undefined;
     const rawCarMake = cols.carMake ? this.cellText(row.getCell(cols.carMake).value) || undefined : undefined;
-    // A blank Car Make with a Car Model present is inferred (e.g. "Swift" ->
-    // "Maruti Suzuki"); a blank Car Make with nothing to infer from falls
-    // back to "Unknown" rather than staying blank -- matches what the sheet
-    // preview grid already shows for this same cell (see buildRawPreview).
-    const carMake = rawCarMake ?? (carModel ? inferCarMakeFromModel(carModel) : undefined) ?? 'Unknown';
+    // A blank Car Make with a Car Model present is inferred -- the model
+    // cell might just be a model name ("Swift" -> "Maruti Suzuki") or the
+    // make combined into it ("Toyota Innova" -> make "Toyota", model
+    // trimmed to "Innova"); nothing to infer from falls back to "Unknown"
+    // rather than staying blank. Matches what the sheet preview grid
+    // already shows for these same two cells (see buildRawPreview).
+    const split = !rawCarMake && rawCarModel ? splitMakeAndModel(rawCarModel) : undefined;
+    const carMake = rawCarMake ?? split?.make ?? 'Unknown';
+    const carModel = rawCarMake ? rawCarModel : (split?.model ?? rawCarModel);
 
     return {
       phone,
