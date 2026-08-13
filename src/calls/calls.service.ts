@@ -83,12 +83,35 @@ export class CallsService {
   }
 
   async updateExtraction(callId: string, dto: UpdateExtractionDto, editedById: string) {
-    const existing = await this.prisma.callExtraction.findUnique({ where: { callId } });
-    if (!existing) throw new NotFoundException(`No extraction found for call ${callId}`);
+    const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { businessCategory: true } });
+    if (!call) throw new NotFoundException(`Call ${callId} not found`);
 
-    const updated = await this.prisma.callExtraction.update({
+    // Calls that never got a real recording/transcript (missed, unanswered,
+    // still-failed telephony webhooks) have no CallExtraction row at all --
+    // upsert rather than requiring one to already exist, so those calls can
+    // still be filled in by hand instead of having no edit option at all.
+    const updated = await this.prisma.callExtraction.upsert({
       where: { callId },
-      data: {
+      create: {
+        callId,
+        businessCategory: call.businessCategory,
+        customerName: dto.customerName,
+        carMake: dto.carMake,
+        carModel: dto.carModel,
+        carVariant: dto.carVariant,
+        location: dto.location,
+        customerRequirements: dto.customerRequirements,
+        budget: dto.budget,
+        followUpRequired: dto.followUpRequired,
+        followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : undefined,
+        summary: dto.summary,
+        sentiment: dto.sentiment,
+        extractedByModel: 'manual_edit',
+        extractedAt: new Date(),
+        editedBy: editedById,
+        editedAt: new Date(),
+      },
+      update: {
         customerName: dto.customerName,
         carMake: dto.carMake,
         carModel: dto.carModel,
