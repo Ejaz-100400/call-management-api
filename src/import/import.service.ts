@@ -801,13 +801,37 @@ export class ImportService {
     return undefined;
   }
 
+  /**
+   * This business's spreadsheets are consistently day-first ("18/04/26",
+   * "1.5.26"), but JS's native Date parsing reads slash/dot dates as
+   * month-first -- "18/04/26" is an invalid month and returned null,
+   * silently falling back to "today" wherever this call's result feeds a
+   * default; "05/04/26" (5 April) parsed as May 4 without even failing.
+   * Both looked like "the call date shows the import date" from the UI.
+   * Day-first is tried first for numeric d/m/y-style strings; anything else
+   * (ISO timestamps, "May 5 2024", real Excel date cells handled above)
+   * still goes through native parsing.
+   */
   private parseDate(value: unknown): Date | null {
     if (value instanceof Date) return value;
-    if (typeof value === 'string' && value.trim()) {
-      const parsed = new Date(value.trim());
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    if (typeof value !== 'string' || !value.trim()) return null;
+    const raw = value.trim();
+
+    const dayFirst = raw.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})(?:[ T](\d{1,2}):(\d{2}))?\s*$/);
+    if (dayFirst) {
+      const [, dStr, mStr, yStr, hStr, minStr] = dayFirst;
+      const day = Number(dStr);
+      const month = Number(mStr);
+      let year = Number(yStr);
+      if (yStr.length === 2) year += year < 70 ? 2000 : 1900;
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        const parsed = new Date(year, month - 1, day, hStr ? Number(hStr) : 0, minStr ? Number(minStr) : 0);
+        if (!Number.isNaN(parsed.getTime())) return parsed;
+      }
     }
-    return null;
+
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   private cellText(value: unknown): string {
