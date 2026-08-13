@@ -25,6 +25,31 @@ import { BusinessCategory, Prisma } from '@prisma/client';
  */
 const PRODUCT_MATCH_THRESHOLD = 0.25;
 
+/**
+ * Known synonyms whose text shares almost no characters with the catalog
+ * name they actually mean -- pg_trgm similarity can never bridge that gap
+ * (and can even mislead: "extra light" happens to share enough trigrams
+ * with "Dickey Light" to clear the threshold for the wrong product). Checked
+ * before the fuzzy match; the matched alias text is substituted in place of
+ * the discussed phrase so it still goes through the normal candidate query
+ * (respecting category preference, active-only, etc.) instead of hard-coding
+ * a product id here.
+ */
+const PRODUCT_ALIASES: Array<{ pattern: RegExp; product: string }> = [
+  { pattern: /\bextra\s*lights?\b/i, product: 'Auxiliary Light' },
+  { pattern: /\btail\s*(light|lamp)s?\b/i, product: 'Dickey Light' },
+  // "bi-led" alone scores higher against plain "LED" than "Bi LED Projector"
+  // by raw trigram overlap -- force it to the specific product.
+  { pattern: /\bbi[\s-]?led\b/i, product: 'Bi LED Projector' },
+  // Common transcription of "bracket" in this business's notes -- no other
+  // catalog product this could plausibly mean.
+  { pattern: /\bbrake\b/i, product: 'Fog Bracket' },
+];
+
+function resolveAlias(discussed: string): string {
+  return PRODUCT_ALIASES.find((a) => a.pattern.test(discussed))?.product ?? discussed;
+}
+
 type ProductMatchClient = Pick<Prisma.TransactionClient, '$queryRaw' | 'callProduct'>;
 
 export interface LinkDiscussedProductsResult {
@@ -46,9 +71,10 @@ export async function linkDiscussedProducts(
   const unmatchedPhrases: string[] = [];
   for (const discussed of productsDiscussed) {
     if (!discussed.trim()) continue;
+    const matchText = resolveAlias(discussed);
 
     const candidates = await client.$queryRaw<Array<{ id: string; category: BusinessCategory; similarity: number }>>`
-      SELECT id, category, similarity(name, ${discussed}) AS similarity
+      SELECT id, category, similarity(name, ${matchText}) AS similarity
       FROM products
       WHERE active = true
       ORDER BY similarity DESC
