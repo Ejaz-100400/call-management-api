@@ -10,7 +10,10 @@ import { extractHandwrittenEntries, isSupportedImageType, resolveImageMediaType,
 
 const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
-const PREVIEW_MAX_ROWS = 50;
+// Matches MAX_ROWS -- the preview shows literally every row that would be
+// imported, so date/car-make/model issues are visible before committing
+// rather than only in the first 50 rows.
+const PREVIEW_MAX_ROWS = MAX_ROWS;
 const PREVIEW_MAX_SHEETS = 20;
 // How many rows' independent transactions run at once during a commit.
 // Each one holds a real DB connection for its whole duration, and Prisma's
