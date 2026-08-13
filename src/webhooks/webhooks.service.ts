@@ -13,9 +13,14 @@ export class WebhooksService {
   ) {}
 
   async handleCallCompleted(payload: Record<string, unknown>) {
-    // Exotel's Passthru applet (confirmed against its own docs) only sends
-    // CallSid/CallFrom/CallTo/Direction/CurrentTime/DialWhomNumber -- notably
-    // NOT recording URL, duration, or final status. Those only come from a
+    // Exotel's docs describe CallSid/CallFrom/CallTo/Direction/CurrentTime/
+    // DialWhomNumber -- but a real live payload also carried From/To
+    // alongside CallFrom/CallTo, and critically CallTo did NOT match the
+    // actual ExoPhone/Virtual Number for that call while To did. Preferring
+    // To/From (falling back to CallTo/CallFrom if a differently-configured
+    // flow only sends the documented set) is what actually matches the
+    // dashboard's own "Virtual Number" field. None of this includes the
+    // recording URL, duration, or final status -- those only come from a
     // separate Call Details lookup made after the fact using CallSid, which
     // the worker does once it picks up the job (see exotel.provider.ts and
     // process-call.ts) -- the recording usually isn't finalized the instant
@@ -23,15 +28,17 @@ export class WebhooksService {
     this.logger.log(`Received call-completed webhook: ${JSON.stringify(payload)}`);
 
     const callSid = payload.CallSid as string | undefined;
-    const callerPhone = (payload.CallFrom as string | undefined)?.trim();
+    const callerPhone = ((payload.From ?? payload.CallFrom) as string | undefined)?.trim();
+    const businessNumber = (payload.To ?? payload.CallTo) as string | undefined;
+    const currentTime = (payload.CurrentTime ?? payload.Created) as string | undefined;
     const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
 
     const call = await this.prisma.call.create({
       data: {
         externalCallId: callSid ?? undefined,
-        businessCategory: this.resolveCategory(payload.CallTo as string),
+        businessCategory: this.resolveCategory(businessNumber),
         customerId: customer?.id,
-        callDate: payload.CurrentTime ? new Date(payload.CurrentTime as string) : new Date(),
+        callDate: currentTime ? new Date(currentTime) : new Date(),
         durationSeconds: 0, // corrected once the worker fetches real call details
         recordingStorageKey: null, // filled in once the worker uploads it to object storage
         status: 'pending',
@@ -55,7 +62,7 @@ export class WebhooksService {
     });
   }
 
-  private resolveCategory(businessNumber: string): BusinessCategory {
+  private resolveCategory(businessNumber: string | undefined): BusinessCategory {
     // With exactly two fixed lines, an env-configured mapping is enough.
     // If you ever add a third number, promote this into a business_numbers table.
     const carGlassesNumber = process.env.CAR_GLASSES_NUMBER;
