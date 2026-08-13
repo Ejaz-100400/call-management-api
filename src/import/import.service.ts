@@ -6,7 +6,7 @@ import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
 import { linkDiscussedProducts } from '../common/product-matching.util';
 import { splitMakeAndModel } from '../common/car-make-lookup';
 import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
-import { extractHandwrittenEntries, isSupportedImageType, type ExtractedEntry } from './ocr.provider';
+import { extractHandwrittenEntries, isSupportedImageType, resolveImageMediaType, type ExtractedEntry } from './ocr.provider';
 
 const MAX_ROWS = 1000;
 const MAX_PHOTOS = 30;
@@ -297,8 +297,17 @@ export class ImportService {
           results[i] = { sourceFile: file.originalname, entries: [], error: `Unsupported file type (${file.mimetype})` };
           continue;
         }
+        // The reported mimetype comes from the file's extension, not its
+        // actual bytes -- check the real content against it (catches things
+        // like an iPhone HEIC photo renamed to .jpg) before spending an API
+        // call on a file that will just get rejected as malformed anyway.
+        const resolved = resolveImageMediaType(file.buffer, file.mimetype);
+        if ('error' in resolved) {
+          results[i] = { sourceFile: file.originalname, entries: [], error: resolved.error };
+          continue;
+        }
         try {
-          const entries = await extractHandwrittenEntries(file.buffer, file.mimetype);
+          const entries = await extractHandwrittenEntries(file.buffer, resolved.mediaType);
           results[i] = { sourceFile: file.originalname, entries };
         } catch (err) {
           results[i] = { sourceFile: file.originalname, entries: [], error: (err as Error).message };

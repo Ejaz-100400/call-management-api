@@ -205,6 +205,57 @@ export function isSupportedImageType(mimeType: string): mimeType is SupportedMed
   return (SUPPORTED_MEDIA_TYPES as readonly string[]).includes(mimeType);
 }
 
+/**
+ * The browser's reported mimetype (what isSupportedImageType checks) comes
+ * from the file's extension/its own sniffing, not its actual bytes -- a
+ * common real-world mismatch is an iPhone photo that's genuinely HEIC but
+ * got renamed/exported with a ".jpg" extension, which reports as
+ * "image/jpeg" while the content Claude's API receives is still HEIC and
+ * gets rejected as malformed. Checking the real magic bytes catches this
+ * (and other mismatches) before the API call, so the error message can
+ * actually say what's wrong instead of surfacing a raw API error string.
+ */
+function detectActualImageFormat(buffer: Buffer): 'jpeg' | 'png' | 'gif' | 'webp' | 'heic' | 'unknown' {
+  if (buffer.length < 12) return 'unknown';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpeg';
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buffer.subarray(0, 4).toString('ascii') === 'GIF8') return 'gif';
+  if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'webp';
+  const ftypBrand = buffer.subarray(4, 8).toString('ascii') === 'ftyp' ? buffer.subarray(8, 12).toString('ascii') : '';
+  if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(ftypBrand)) return 'heic';
+  return 'unknown';
+}
+
+const FORMAT_TO_MEDIA_TYPE: Record<string, SupportedMediaType> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
+/**
+ * Validates the file's real content against what it claims to be, returning
+ * the media type to actually send to Claude (which may differ from the
+ * upload's reported mimetype in edge cases) or a human-readable reason it
+ * can't be processed.
+ */
+export function resolveImageMediaType(buffer: Buffer, reportedMimeType: string): { mediaType: SupportedMediaType } | { error: string } {
+  const actual = detectActualImageFormat(buffer);
+
+  if (actual === 'heic') {
+    return {
+      error:
+        'This looks like a HEIC photo (common on iPhones) saved with a .jpg name rather than actually converted -- ' +
+        'export/share it as JPEG or PNG from the phone first (e.g. via "Save as JPEG" in Photos, or share it through ' +
+        'WhatsApp/email which usually converts it automatically), then re-upload.',
+    };
+  }
+  if (actual === 'unknown') {
+    return { error: "This file doesn't look like a valid image (its content doesn't match any supported image format) -- try re-saving or re-exporting it and upload again." };
+  }
+  return { mediaType: FORMAT_TO_MEDIA_TYPE[actual] };
+}
+
 async function requestExtraction(imageBuffer: Buffer, mediaType: SupportedMediaType) {
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-5',
