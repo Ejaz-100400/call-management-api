@@ -172,6 +172,156 @@ const MODEL_TO_MAKE: Record<string, string> = {
 
 const SORTED_MODEL_ENTRIES = Object.entries(MODEL_TO_MAKE).sort((a, b) => b[0].length - a[0].length);
 
+// Properly-cased display text for each key above -- used to reduce a messy
+// "Car Model" cell ("Swift 2019 ZXI variant", "city ivtec 2012") down to
+// just the recognized model name, dropping the year/trim/engine-code text
+// that's often typed alongside it.
+const MODEL_DISPLAY: Record<string, string> = {
+  swift: 'Swift',
+  dzire: 'Dzire',
+  baleno: 'Baleno',
+  wagonr: 'WagonR',
+  'wagon r': 'WagonR',
+  alto: 'Alto',
+  celerio: 'Celerio',
+  ertiga: 'Ertiga',
+  'vitara brezza': 'Vitara Brezza',
+  brezza: 'Brezza',
+  's-presso': 'S-Presso',
+  spresso: 'S-Presso',
+  ignis: 'Ignis',
+  xl6: 'XL6',
+  ciaz: 'Ciaz',
+  eeco: 'Eeco',
+  omni: 'Omni',
+  jimny: 'Jimny',
+  fronx: 'Fronx',
+
+  i10: 'i10',
+  'grand i10': 'Grand i10',
+  i20: 'i20',
+  creta: 'Creta',
+  venue: 'Venue',
+  verna: 'Verna',
+  santro: 'Santro',
+  aura: 'Aura',
+  alcazar: 'Alcazar',
+  tucson: 'Tucson',
+  exter: 'Exter',
+  eon: 'Eon',
+  xcent: 'Xcent',
+
+  nexon: 'Nexon',
+  punch: 'Punch',
+  tiago: 'Tiago',
+  tigor: 'Tigor',
+  altroz: 'Altroz',
+  harrier: 'Harrier',
+  safari: 'Safari',
+  hexa: 'Hexa',
+  zest: 'Zest',
+  bolt: 'Bolt',
+  nano: 'Nano',
+  indica: 'Indica',
+  indigo: 'Indigo',
+
+  city: 'City',
+  amaze: 'Amaze',
+  jazz: 'Jazz',
+  'wr-v': 'WR-V',
+  wrv: 'WR-V',
+  civic: 'Civic',
+  brv: 'BR-V',
+  'br-v': 'BR-V',
+  elevate: 'Elevate',
+
+  innova: 'Innova',
+  fortuner: 'Fortuner',
+  glanza: 'Glanza',
+  'urban cruiser': 'Urban Cruiser',
+  camry: 'Camry',
+  etios: 'Etios',
+  yaris: 'Yaris',
+  hyryder: 'Hyryder',
+  hilux: 'Hilux',
+  corolla: 'Corolla',
+
+  xuv700: 'XUV700',
+  xuv500: 'XUV500',
+  xuv300: 'XUV300',
+  xuv400: 'XUV400',
+  scorpio: 'Scorpio',
+  bolero: 'Bolero',
+  thar: 'Thar',
+  kuv100: 'KUV100',
+  marazzo: 'Marazzo',
+  xylo: 'Xylo',
+
+  seltos: 'Seltos',
+  sonet: 'Sonet',
+  carens: 'Carens',
+  carnival: 'Carnival',
+
+  kwid: 'Kwid',
+  triber: 'Triber',
+  duster: 'Duster',
+  kiger: 'Kiger',
+
+  magnite: 'Magnite',
+  kicks: 'Kicks',
+  terrano: 'Terrano',
+  micra: 'Micra',
+
+  ecosport: 'EcoSport',
+  figo: 'Figo',
+  aspire: 'Aspire',
+  endeavour: 'Endeavour',
+
+  polo: 'Polo',
+  vento: 'Vento',
+  taigun: 'Taigun',
+  virtus: 'Virtus',
+
+  rapid: 'Rapid',
+  octavia: 'Octavia',
+  superb: 'Superb',
+  kushaq: 'Kushaq',
+  slavia: 'Slavia',
+
+  hector: 'Hector',
+  astor: 'Astor',
+  'zs ev': 'ZS EV',
+  gloster: 'Gloster',
+  comet: 'Comet',
+
+  beat: 'Beat',
+  spark: 'Spark',
+  cruze: 'Cruze',
+  sail: 'Sail',
+  tavera: 'Tavera',
+
+  go: 'GO',
+  'redi-go': 'redi-GO',
+  redigo: 'redi-GO',
+
+  compass: 'Compass',
+  meridian: 'Meridian',
+
+  '3 series': '3 Series',
+  '5 series': '5 Series',
+  x1: 'X1',
+  x3: 'X3',
+  x5: 'X5',
+  'c-class': 'C-Class',
+  'e-class': 'E-Class',
+  gla: 'GLA',
+  glc: 'GLC',
+  a4: 'A4',
+  a6: 'A6',
+  q3: 'Q3',
+  q5: 'Q5',
+};
+
 // Real-world "Car Model" cells are often actually "Make Model" typed
 // together (e.g. "Toyota Innova"), or occasionally just a make with no
 // model at all (e.g. someone typing "Hyundai" and leaving it at that) --
@@ -219,6 +369,31 @@ export function inferCarMakeFromModel(rawModel: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Reduces a "Car Model" cell down to just the recognized model name --
+ * "Swift 2019 ZXI variant" -> "Swift", "city ivtec 2012" -> "City",
+ * "TOYATA FORTUNER" -> "Fortuner" (catches the make typo too, since this
+ * only looks at the model-name table). Returns undefined when nothing in
+ * the table matches, so the caller can fall back to the raw text rather
+ * than losing an unrecognized model entirely.
+ */
+function canonicalizeModel(rawModel: string): string | undefined {
+  const normalized = rawModel.trim();
+  if (!normalized) return undefined;
+
+  for (const [model] of SORTED_MODEL_ENTRIES) {
+    if (new RegExp(`\\b${escapeRegExp(model)}\\b`, 'i').test(normalized)) {
+      return MODEL_DISPLAY[model];
+    }
+  }
+
+  const compacted = compact(normalized);
+  for (const [model] of SORTED_MODEL_ENTRIES) {
+    if (compacted.includes(compact(model))) return MODEL_DISPLAY[model];
+  }
+  return undefined;
+}
+
 export interface SplitMakeAndModel {
   make?: string;
   model?: string;
@@ -229,7 +404,10 @@ export interface SplitMakeAndModel {
  * "Toyota Innova" becomes { make: "Toyota", model: "Innova" }, a bare
  * "Hyundai" becomes { make: "Hyundai", model: undefined } (there's no real
  * model there), and a plain model like "Fronx" falls through to the
- * model->make lookup above, model left as typed.
+ * model->make lookup above, model left as typed. Whatever text ends up as
+ * the model is further reduced to just its recognized model name via
+ * canonicalizeModel -- "Swift 2019 ZXI variant" becomes "Swift" -- falling
+ * back to the text as typed when nothing in the table matches.
  */
 export function splitMakeAndModel(raw: string): SplitMakeAndModel {
   const normalized = raw.trim();
@@ -242,9 +420,9 @@ export function splitMakeAndModel(raw: string): SplitMakeAndModel {
     const prefixPattern = new RegExp(`^${escapeRegExp(alias)}\\b\\s*`, 'i');
     if (prefixPattern.test(normalized)) {
       const rest = normalized.replace(prefixPattern, '').trim();
-      return { make: canonical, model: rest || undefined };
+      return { make: canonical, model: rest ? (canonicalizeModel(rest) ?? rest) : undefined };
     }
   }
 
-  return { make: inferCarMakeFromModel(normalized), model: normalized };
+  return { make: inferCarMakeFromModel(normalized), model: canonicalizeModel(normalized) ?? normalized };
 }

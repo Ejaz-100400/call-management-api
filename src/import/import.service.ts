@@ -556,7 +556,12 @@ export class ImportService {
     if (cell.value == null) return '';
     if (cell.type === ExcelJS.ValueType.Date) {
       const d = cell.value as Date;
-      return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+      if (Number.isNaN(d.getTime())) return '';
+      // toLocaleDateString() with no locale renders in whatever locale the
+      // server process happens to be running under (month-first on Render's
+      // default) -- explicit en-GB keeps this day-first regardless, matching
+      // the dd/mm/yyyy convention used everywhere else in the app.
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
     return (cell.text ?? '').toString().trim();
   }
