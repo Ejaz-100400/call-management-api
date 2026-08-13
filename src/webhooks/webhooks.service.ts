@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BusinessCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { parseIstTimestamp } from '../common/timezone.util';
+import { BusinessNumbersService } from '../business-numbers/business-numbers.service';
 
 @Injectable()
 export class WebhooksService {
@@ -11,6 +11,7 @@ export class WebhooksService {
   constructor(
     private prisma: PrismaService,
     private queue: QueueService,
+    private businessNumbers: BusinessNumbersService,
   ) {}
 
   async handleCallCompleted(payload: Record<string, unknown>) {
@@ -37,7 +38,7 @@ export class WebhooksService {
     const call = await this.prisma.call.create({
       data: {
         externalCallId: callSid ?? undefined,
-        businessCategory: this.resolveCategory(businessNumber),
+        businessCategory: await this.businessNumbers.resolveCategory(businessNumber),
         customerId: customer?.id,
         callDate: (currentTime && parseIstTimestamp(currentTime)) ?? new Date(),
         durationSeconds: 0, // corrected once the worker fetches real call details
@@ -61,12 +62,5 @@ export class WebhooksService {
       create: { phoneNumber },
       update: {},
     });
-  }
-
-  private resolveCategory(businessNumber: string | undefined): BusinessCategory {
-    // With exactly two fixed lines, an env-configured mapping is enough.
-    // If you ever add a third number, promote this into a business_numbers table.
-    const carGlassesNumber = process.env.CAR_GLASSES_NUMBER;
-    return businessNumber === carGlassesNumber ? 'car_glasses' : 'car_modifications';
   }
 }

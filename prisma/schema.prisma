@@ -136,6 +136,18 @@ model CallExtraction {
   @@schema("public")
 }
 
+model BusinessNumber {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phoneNumber      String           @unique @map("phone_number")
+  businessCategory BusinessCategory @map("business_category")
+  label            String
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("business_numbers")
+  @@schema("public")
+}
+
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model Product {
   id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
