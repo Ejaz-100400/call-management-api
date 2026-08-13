@@ -526,19 +526,22 @@ export class ImportService {
       const cells: string[] = [];
       for (let c = 1; c <= colCount; c++) cells.push(this.cellPreviewText(row.getCell(c)));
 
-      if (cols?.carMake) {
-        const makeIdx = cols.carMake - 1;
-        const modelIdx = cols.carModel ? cols.carModel - 1 : -1;
-        if (makeIdx < cells.length && !cells[makeIdx]) {
-          const rawModel = modelIdx >= 0 && modelIdx < cells.length ? cells[modelIdx] : '';
-          const split = rawModel ? splitMakeAndModel(rawModel) : {};
-          cells[makeIdx] = split.make ?? 'Unknown';
-          // The model cell may have actually held "Make Model" combined
-          // (e.g. "Toyota Innova") or just a make with no real model --
-          // trim it down to the model-only text this same split produced.
-          if (modelIdx >= 0 && modelIdx < cells.length && rawModel) {
-            cells[modelIdx] = split.model ?? '';
+      if (cols?.carModel) {
+        const modelIdx = cols.carModel - 1;
+        const makeIdx = cols.carMake ? cols.carMake - 1 : -1;
+        const rawModel = modelIdx < cells.length ? cells[modelIdx] : '';
+        if (rawModel) {
+          const split = splitMakeAndModel(rawModel);
+          // Blank Car Make gets filled in with what will actually be
+          // imported; an already-filled Car Make is left as typed.
+          if (makeIdx >= 0 && makeIdx < cells.length && !cells[makeIdx]) {
+            cells[makeIdx] = split.make ?? 'Unknown';
           }
+          // The model cell may hold "Make Model" combined (e.g. "Toyota
+          // Innova") whether or not Car Make was separately filled in --
+          // always trim it down to the model-only text this same split
+          // produced, so the preview matches what actually gets imported.
+          cells[modelIdx] = split.model ?? '';
         }
       }
 
@@ -639,15 +642,16 @@ export class ImportService {
 
     const rawCarModel = cols.carModel ? this.cellText(row.getCell(cols.carModel).value) || undefined : undefined;
     const rawCarMake = cols.carMake ? this.cellText(row.getCell(cols.carMake).value) || undefined : undefined;
-    // A blank Car Make with a Car Model present is inferred -- the model
-    // cell might just be a model name ("Swift" -> "Maruti Suzuki") or the
-    // make combined into it ("Toyota Innova" -> make "Toyota", model
-    // trimmed to "Innova"); nothing to infer from falls back to "Unknown"
-    // rather than staying blank. Matches what the sheet preview grid
-    // already shows for these same two cells (see buildRawPreview).
-    const split = !rawCarMake && rawCarModel ? splitMakeAndModel(rawCarModel) : undefined;
+    // The model cell may hold "Make Model" combined (e.g. "Toyota Innova")
+    // whether or not Car Make was separately filled in -- always split it so
+    // the model we store is model-only ("Innova"), never a make/model
+    // duplicate. A blank Car Make also gets inferred from this same split
+    // ("Swift" -> "Maruti Suzuki"); nothing to infer from falls back to
+    // "Unknown" rather than staying blank. Matches what the sheet preview
+    // grid already shows for these same two cells (see buildRawPreview).
+    const split = rawCarModel ? splitMakeAndModel(rawCarModel) : undefined;
     const carMake = rawCarMake ?? split?.make ?? 'Unknown';
-    const carModel = rawCarMake ? rawCarModel : (split?.model ?? rawCarModel);
+    const carModel = split?.model ?? rawCarModel;
 
     return {
       phone,
