@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BusinessCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
+import { parseIstTimestamp } from '../common/timezone.util';
 
 @Injectable()
 export class WebhooksService {
@@ -38,7 +39,7 @@ export class WebhooksService {
         externalCallId: callSid ?? undefined,
         businessCategory: this.resolveCategory(businessNumber),
         customerId: customer?.id,
-        callDate: currentTime ? new Date(currentTime) : new Date(),
+        callDate: (currentTime && parseIstTimestamp(currentTime)) ?? new Date(),
         durationSeconds: 0, // corrected once the worker fetches real call details
         recordingStorageKey: null, // filled in once the worker uploads it to object storage
         status: 'pending',

@@ -1,3 +1,5 @@
+import { parseIstTimestamp } from '../../common/timezone.util';
+
 /**
  * Exotel's Passthru applet only sends {CallSid, CallFrom, CallTo, Direction,
  * CurrentTime, DialWhomNumber} to the webhook -- notably NOT the recording
@@ -39,7 +41,10 @@ export async function fetchExotelCallDetails(callSid: string): Promise<ExotelCal
     recordingUrl: (call.RecordingUrl as string) || null,
     durationSeconds: call.Duration != null ? Number(call.Duration) : 0,
     status: (call.Status as string) ?? 'unknown',
-    startTime: call.StartTime ? new Date(call.StartTime as string) : null,
+    // StartTime is an IST wall-clock string like everything else Exotel
+    // sends -- see parseIstTimestamp's comment for why this can't be a bare
+    // `new Date(...)`.
+    startTime: call.StartTime ? parseIstTimestamp(call.StartTime as string) : null,
   };
 }
 
