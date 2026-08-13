@@ -348,6 +348,55 @@ function compact(value: string): string {
   return value.toLowerCase().replace(/[\s-]+/g, '');
 }
 
+function levenshtein(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp: number[][] = Array.from({ length: rows }, () => new Array(cols).fill(0));
+  for (let i = 0; i < rows; i++) dp[i][0] = i;
+  for (let j = 0; j < cols; j++) dp[0][j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[rows - 1][cols - 1];
+}
+
+/**
+ * Catches typos in a model name that don't match anything via exact/substring
+ * comparison ("Erthiga" -> "Ertiga"). Only applies to keys of 5+ characters --
+ * short alphanumeric codes (i10 vs i20, x1 vs x3 vs x5, a4 vs a6, q3 vs q5,
+ * gla vs glc) sit one edit apart from a genuinely different real model, so
+ * fuzzy-matching those would silently swap one car for another instead of
+ * fixing a typo.
+ */
+function fuzzyModelMatch(compactedText: string): [model: string, make: string] | undefined {
+  let best: { model: string; make: string; distance: number } | undefined;
+
+  for (const [model, make] of SORTED_MODEL_ENTRIES) {
+    const key = compact(model);
+    if (key.length < 5) continue;
+    const maxDistance = key.length <= 7 ? 1 : 2;
+
+    // Slide a window of the key's length (+/- 1) across the text and take
+    // the best alignment, so a typo anywhere in the word (or a trailing
+    // variant word right after it) doesn't throw off the comparison.
+    for (let len = key.length - 1; len <= key.length + 1; len++) {
+      if (len < 1) continue;
+      for (let start = 0; start + len <= compactedText.length; start++) {
+        const window = compactedText.slice(start, start + len);
+        const distance = levenshtein(window, key);
+        if (distance <= maxDistance && (!best || distance < best.distance)) {
+          best = { model, make, distance };
+        }
+      }
+    }
+  }
+
+  return best ? [best.model, best.make] : undefined;
+}
+
 /** Returns the known make for a car model string (word-boundary match), or undefined if not recognized. */
 export function inferCarMakeFromModel(rawModel: string): string | undefined {
   const normalized = rawModel.trim();
@@ -366,7 +415,8 @@ export function inferCarMakeFromModel(rawModel: string): string | undefined {
   for (const [model, make] of SORTED_MODEL_ENTRIES) {
     if (compacted.includes(compact(model))) return make;
   }
-  return undefined;
+
+  return fuzzyModelMatch(compacted)?.[1];
 }
 
 /**
@@ -391,7 +441,9 @@ function canonicalizeModel(rawModel: string): string | undefined {
   for (const [model] of SORTED_MODEL_ENTRIES) {
     if (compacted.includes(compact(model))) return MODEL_DISPLAY[model];
   }
-  return undefined;
+
+  const fuzzy = fuzzyModelMatch(compacted);
+  return fuzzy ? MODEL_DISPLAY[fuzzy[0]] : undefined;
 }
 
 export interface SplitMakeAndModel {
