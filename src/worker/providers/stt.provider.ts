@@ -8,6 +8,17 @@ export interface TranscriptionResult {
   diarized: unknown;
 }
 
+// Most customers speak Tamil with English car-part/model terms mixed in
+// (a smaller share call in Hindi). Deepgram's detect_language can't tell
+// Tamil apart from Hindi -- verified directly against a real Tamil call,
+// where auto-detect misidentified it as Hindi and produced a garbled
+// transcript, while forcing language: 'ta' transcribed it cleanly (Tamil
+// isn't in Nova-3's code-switching set, but the monolingual Tamil model
+// handles embedded English terms fine). Hardcoded rather than
+// auto-detected since there's no reliable signal to distinguish the two
+// languages for this business's calls specifically.
+const PRIMARY_LANGUAGE = 'ta';
+
 /**
  * Batch (pre-recorded) transcription with diarization -- separates employee
  * vs. customer speech, which meaningfully improves what the AI extraction
@@ -19,7 +30,7 @@ export async function transcribeAudio(audioBuffer: Buffer): Promise<Transcriptio
     model: 'nova-3',
     smart_format: true,
     diarize: true,
-    detect_language: true,
+    language: PRIMARY_LANGUAGE,
   });
 
   if (error) {
@@ -35,7 +46,9 @@ export async function transcribeAudio(audioBuffer: Buffer): Promise<Transcriptio
 
   return {
     rawText: alternative.transcript,
-    language: (channel as unknown as { detected_language?: string })?.detected_language ?? null,
+    // Deepgram only populates detected_language when detect_language is
+    // set, which we don't use here since the language is forced above.
+    language: PRIMARY_LANGUAGE,
     diarized: alternative.words ?? null,
   };
 }
