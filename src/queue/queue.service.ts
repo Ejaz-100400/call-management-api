@@ -37,8 +37,14 @@ export class QueueService implements OnModuleDestroy {
 
   enqueueCallProcessing(job: CallProcessingJob) {
     return this.callProcessingQueue.add(job.type, job, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
+      // Exotel's recording isn't always ready the instant a call ends, and a
+      // webhook that fires early (e.g. before the call connects) needs to
+      // wait for the call to actually finish before a recording exists at
+      // all -- 3 attempts over ~15s wasn't enough buffer for either case.
+      // 6 attempts with exponential backoff spans ~5 minutes before giving
+      // up for good.
+      attempts: 6,
+      backoff: { type: 'exponential', delay: 10000 },
       removeOnComplete: 500,
       removeOnFail: 1000,
     });
