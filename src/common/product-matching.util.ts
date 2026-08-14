@@ -254,6 +254,19 @@ async function findProductByName(
   return sameCategory ?? bestOverall;
 }
 
+/**
+ * The AI extraction often writes "Core item (extra descriptive detail)" --
+ * e.g. "Auxiliary/fog lights (premium grade, available in 120W/200W/240W
+ * and 2/3/4 light configurations)". The parenthetical is useful detail to
+ * keep in what gets stored, but it dilutes trigram similarity enough to
+ * drop a clear match below threshold ("Auxiliary/fog lights" alone scores
+ * fine against "Auxiliary Light"; the full sentence doesn't). Only used as
+ * a fallback when matching the phrase as written already failed.
+ */
+function stripTrailingParenthetical(text: string): string {
+  return text.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
 export async function linkDiscussedProducts(
   client: ProductMatchClient,
   callId: string,
@@ -286,7 +299,11 @@ export async function linkDiscussedProducts(
       continue;
     }
 
-    const match = await findProductByName(client, discussed, businessCategory);
+    let match = await findProductByName(client, discussed, businessCategory);
+    if (!match) {
+      const core = stripTrailingParenthetical(discussed);
+      if (core && core !== discussed) match = await findProductByName(client, core, businessCategory);
+    }
     if (match) matchedProductIds.add(match.id);
     else unmatchedPhrases.push(discussed);
   }
