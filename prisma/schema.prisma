@@ -139,6 +139,14 @@ model CallExtraction {
 model BusinessNumber {
   id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   phoneNumber      String           @unique @map("phone_number")
+  // The Exotel ExoPhone this line forwards through -- webhooks always carry
+  // this number (not the published phoneNumber above) in their To/CallTo
+  // field, since carrier-level forwarding means Exotel never sees the
+  // originally-dialed number. Used for category resolution and for
+  // recognizing Exotel's internal leg-completion webhooks, kept separate
+  // from phoneNumber so the settings page can keep showing the published
+  // business line to staff.
+  exophoneNumber   String?          @unique @map("exophone_number")
   businessCategory BusinessCategory @map("business_category")
   label            String
   createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)

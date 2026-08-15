@@ -7,6 +7,7 @@ import { UpdateBusinessNumberDto } from './dto/update-business-number.dto';
 export interface BusinessNumberView {
   id: string;
   number: string;
+  exophoneNumber: string | null;
   category: BusinessCategory;
   label: string;
 }
@@ -24,7 +25,12 @@ export class BusinessNumbersService {
     const existing = await this.prisma.businessNumber.findUnique({ where: { phoneNumber: dto.phoneNumber } });
     if (existing) throw new ConflictException(`${dto.phoneNumber} is already configured`);
     const row = await this.prisma.businessNumber.create({
-      data: { phoneNumber: dto.phoneNumber, businessCategory: dto.category, label: dto.label },
+      data: {
+        phoneNumber: dto.phoneNumber,
+        exophoneNumber: dto.exophoneNumber || null,
+        businessCategory: dto.category,
+        label: dto.label,
+      },
     });
     return this.toView(row);
   }
@@ -40,7 +46,13 @@ export class BusinessNumbersService {
 
     const row = await this.prisma.businessNumber.update({
       where: { id },
-      data: { phoneNumber: dto.phoneNumber, businessCategory: dto.category, label: dto.label, updatedAt: new Date() },
+      data: {
+        phoneNumber: dto.phoneNumber,
+        exophoneNumber: dto.exophoneNumber === undefined ? undefined : dto.exophoneNumber || null,
+        businessCategory: dto.category,
+        label: dto.label,
+        updatedAt: new Date(),
+      },
     });
     return this.toView(row);
   }
@@ -54,31 +66,39 @@ export class BusinessNumbersService {
 
   /**
    * Used by the telephony webhook to tag an inbound call's business
-   * category from whichever number it came in on. Unlike the old
-   * env-var-based version (which always guessed "car_modifications" for
-   * anything that wasn't the glasses number), a number that isn't
-   * configured here honestly resolves to "unknown" rather than a guess.
+   * category from whichever number it came in on. Webhooks carry the
+   * Exotel ExoPhone in their To/CallTo field, not the published business
+   * line (carrier-level forwarding means Exotel never sees the originally
+   * dialed number) -- so this looks up by exophoneNumber, not phoneNumber.
+   * A number that isn't configured here honestly resolves to "unknown"
+   * rather than a guess.
    */
-  async resolveCategory(businessNumber: string | undefined): Promise<BusinessCategory> {
-    if (!businessNumber) return 'unknown';
-    const row = await this.prisma.businessNumber.findUnique({ where: { phoneNumber: businessNumber } });
+  async resolveCategory(exophoneNumber: string | undefined): Promise<BusinessCategory> {
+    if (!exophoneNumber) return 'unknown';
+    const row = await this.prisma.businessNumber.findUnique({ where: { exophoneNumber } });
     return row?.businessCategory ?? 'unknown';
   }
 
   /**
-   * True if the given number is one of our own configured ExoPhones/business
-   * lines. Used to recognize Exotel's internal leg-completion webhooks (where
-   * the Connect applet's own dial-out gets reported as if it were a fresh
-   * inbound call, CallFrom/CallTo both set to the ExoPhone) so they aren't
-   * mistaken for a real customer call -- a real customer's phone can never
-   * equal one of these by definition.
+   * True if the given number is one of our own configured ExoPhones. Used to
+   * recognize Exotel's internal leg-completion webhooks (where the Connect
+   * applet's own dial-out gets reported as if it were a fresh inbound call,
+   * CallFrom/CallTo both set to the ExoPhone) so they aren't mistaken for a
+   * real customer call -- a real customer's phone can never equal one of
+   * these by definition.
    */
-  async isOwnNumber(phoneNumber: string): Promise<boolean> {
-    const row = await this.prisma.businessNumber.findUnique({ where: { phoneNumber } });
+  async isOwnNumber(exophoneNumber: string): Promise<boolean> {
+    const row = await this.prisma.businessNumber.findUnique({ where: { exophoneNumber } });
     return row !== null;
   }
 
-  private toView(row: { id: string; phoneNumber: string; businessCategory: BusinessCategory; label: string }): BusinessNumberView {
-    return { id: row.id, number: row.phoneNumber, category: row.businessCategory, label: row.label };
+  private toView(row: {
+    id: string;
+    phoneNumber: string;
+    exophoneNumber: string | null;
+    businessCategory: BusinessCategory;
+    label: string;
+  }): BusinessNumberView {
+    return { id: row.id, number: row.phoneNumber, exophoneNumber: row.exophoneNumber, category: row.businessCategory, label: row.label };
   }
 }
