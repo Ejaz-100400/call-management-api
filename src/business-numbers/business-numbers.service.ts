@@ -65,6 +65,19 @@ export class BusinessNumbersService {
     return row?.businessCategory ?? 'unknown';
   }
 
+  /**
+   * True if the given number is one of our own configured ExoPhones/business
+   * lines. Used to recognize Exotel's internal leg-completion webhooks (where
+   * the Connect applet's own dial-out gets reported as if it were a fresh
+   * inbound call, CallFrom/CallTo both set to the ExoPhone) so they aren't
+   * mistaken for a real customer call -- a real customer's phone can never
+   * equal one of these by definition.
+   */
+  async isOwnNumber(phoneNumber: string): Promise<boolean> {
+    const row = await this.prisma.businessNumber.findUnique({ where: { phoneNumber } });
+    return row !== null;
+  }
+
   private toView(row: { id: string; phoneNumber: string; businessCategory: BusinessCategory; label: string }): BusinessNumberView {
     return { id: row.id, number: row.phoneNumber, category: row.businessCategory, label: row.label };
   }

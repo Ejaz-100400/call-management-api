@@ -33,6 +33,16 @@ export class WebhooksService {
     const callerPhone = ((payload.From ?? payload.CallFrom) as string | undefined)?.trim();
     const businessNumber = (payload.To ?? payload.CallTo) as string | undefined;
     const currentTime = (payload.CurrentTime ?? payload.Created) as string | undefined;
+
+    // A Connect applet's own dial-out to a co-worker/group member fires a
+    // second call-completed webhook where CallFrom is the ExoPhone itself,
+    // not the real customer -- skip those so one customer call doesn't
+    // produce two Call rows.
+    if (callerPhone && (await this.businessNumbers.isOwnNumber(callerPhone))) {
+      this.logger.log(`Skipping internal leg webhook (caller ${callerPhone} is one of our own numbers), CallSid=${callSid}`);
+      return { received: true, skipped: true };
+    }
+
     const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
 
     const call = await this.prisma.call.create({
