@@ -53,6 +53,13 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
       // temporary) URL, then move it into permanent object storage.
       audioBuffer = await fetchFromProviderUrl(recordingUrl);
       storageKey = await uploadRecording(callId, audioBuffer);
+      // Persist immediately rather than waiting for the whole pipeline to
+      // finish -- a later step (transcription, AI extraction) failing would
+      // otherwise leave a successfully-stored recording with no DB pointer
+      // to it, making it invisible in the UI despite being safely in R2. A
+      // retry would also re-fetch/re-upload from Exotel's (temporary) URL
+      // every time instead of reusing what's already stored.
+      await prisma.call.update({ where: { id: callId }, data: { recordingStorageKey: storageKey } });
     } else if (call.recordingStorageKey) {
       // Manual reprocess: reuse what's already in object storage.
       audioBuffer = await fetchFromStorage(call.recordingStorageKey);
