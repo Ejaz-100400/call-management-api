@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import type { CallProcessingJob } from '../../queue/queue.service';
 import { linkDiscussedProducts } from '../../common/product-matching.util';
-import { defaultFollowUpDueDate } from '../../follow-ups/follow-up.util';
+import { defaultFollowUpDueDate, withFollowUpConsistency } from '../../follow-ups/follow-up.util';
 import { extractCallInfo } from '../providers/ai.provider';
 import { fetchExotelCallDetails } from '../providers/exotel.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
@@ -82,6 +82,10 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
       businessCategory: call.businessCategory,
       callDate: call.callDate,
     });
+    // Sentiment and the follow-up flag are independent extraction targets --
+    // Claude can say "needs_follow_up" without also setting followUpRequired.
+    // A call that reads as needing follow-up should always get a task.
+    extraction.followUpRequired = withFollowUpConsistency(extraction.followUpRequired, extraction.sentiment);
 
     await prisma.callExtraction.upsert({
       where: { callId },
@@ -150,20 +154,37 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
 async function regenerateSummary(callId: string) {
   const transcript = await prisma.transcript.findUniqueOrThrow({ where: { callId } });
   const call = await prisma.call.findUniqueOrThrow({ where: { id: callId } });
+  const existing = await prisma.callExtraction.findUniqueOrThrow({ where: { callId } });
 
   const extraction = await extractCallInfo(transcript.rawText, {
     businessCategory: call.businessCategory,
     callDate: call.callDate,
   });
+  // This only re-runs summarization, but a fresh sentiment of
+  // "needs_follow_up" still needs to flip the flag/create the task -- this
+  // path previously left followUpRequired (and the FollowUp row) exactly as
+  // they were before the re-summarize, which is how sentiment and the flag
+  // drifted apart on existing calls.
+  const followUpRequired = withFollowUpConsistency(existing.followUpRequired, extraction.sentiment);
 
   await prisma.callExtraction.update({
     where: { callId },
     data: {
       summary: extraction.summary,
       sentiment: extraction.sentiment,
+      followUpRequired,
       extractedAt: new Date(),
     },
   });
+
+  if (followUpRequired && !existing.followUpRequired) {
+    const alreadyHasFollowUp = await prisma.followUp.findFirst({ where: { callId } });
+    if (!alreadyHasFollowUp) {
+      await prisma.followUp.create({
+        data: { callId, dueDate: existing.followUpDate ?? defaultFollowUpDueDate(), assignedTo: call.employeeId },
+      });
+    }
+  }
 }
 
 /**

@@ -10,3 +10,14 @@ export function defaultFollowUpDueDate(from: Date = new Date()): Date {
   due.setDate(due.getDate() + 3);
   return due;
 }
+
+/**
+ * Sentiment and the follow-up flag are extracted/edited independently, so
+ * they can drift out of sync (Claude, an importer, or a manual edit setting
+ * sentiment to "needs_follow_up" without also flipping the checkbox) -- a
+ * call that reads as needing follow-up should always actually get a
+ * Follow-ups page task, so treat the sentiment as authoritative here.
+ */
+export function withFollowUpConsistency(followUpRequired: boolean, sentiment: string | null | undefined): boolean {
+  return followUpRequired || sentiment === 'needs_follow_up';
+}

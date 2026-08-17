@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
-import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
+import { defaultFollowUpDueDate, withFollowUpConsistency } from '../follow-ups/follow-up.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { getSignedRecordingUrl } from '../worker/providers/storage.provider';
@@ -86,6 +86,13 @@ export class CallsService {
     const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { businessCategory: true } });
     if (!call) throw new NotFoundException(`Call ${callId} not found`);
 
+    // This is a PATCH -- a field the caller didn't send should keep whatever
+    // was already there, which is what the existing row's value (rather than
+    // dto's undefined) falls back to below for the follow-up consistency check.
+    const existing = await this.prisma.callExtraction.findUnique({ where: { callId } });
+    const sentiment = dto.sentiment !== undefined ? dto.sentiment : existing?.sentiment;
+    const followUpRequired = withFollowUpConsistency(dto.followUpRequired ?? existing?.followUpRequired ?? false, sentiment);
+
     // Calls that never got a real recording/transcript (missed, unanswered,
     // still-failed telephony webhooks) have no CallExtraction row at all --
     // upsert rather than requiring one to already exist, so those calls can
@@ -102,7 +109,7 @@ export class CallsService {
         location: dto.location,
         customerRequirements: dto.customerRequirements,
         budget: dto.budget,
-        followUpRequired: dto.followUpRequired,
+        followUpRequired,
         followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : undefined,
         summary: dto.summary,
         sentiment: dto.sentiment,
@@ -119,7 +126,7 @@ export class CallsService {
         location: dto.location,
         customerRequirements: dto.customerRequirements,
         budget: dto.budget,
-        followUpRequired: dto.followUpRequired,
+        followUpRequired,
         followUpDate: dto.followUpDate ? new Date(dto.followUpDate) : undefined,
         summary: dto.summary,
         sentiment: dto.sentiment,
@@ -129,9 +136,11 @@ export class CallsService {
     });
 
     // The Follow-ups page reads from the separate FollowUp table, not this
-    // flag directly -- keep the two in sync whenever the flag/date changes,
-    // the same way the live pipeline and historical import already do.
-    if (dto.followUpRequired !== undefined || dto.followUpDate !== undefined) {
+    // flag directly -- keep the two in sync whenever the flag/date changes
+    // (including a sentiment edit alone flipping followUpRequired via the
+    // consistency check above), the same way the live pipeline and
+    // historical import already do.
+    if (dto.followUpRequired !== undefined || dto.followUpDate !== undefined || dto.sentiment !== undefined) {
       await this.syncFollowUp(callId, updated.followUpRequired, updated.followUpDate);
     }
 

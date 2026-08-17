@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CommitPhotoRowDto } from './dto/commit-photo-rows.dto';
 import { linkDiscussedProducts } from '../common/product-matching.util';
 import { splitMakeAndModel } from '../common/car-make-lookup';
-import { defaultFollowUpDueDate } from '../follow-ups/follow-up.util';
+import { defaultFollowUpDueDate, withFollowUpConsistency } from '../follow-ups/follow-up.util';
 import { extractHandwrittenEntries, isSupportedImageType, resolveImageMediaType, type ExtractedEntry } from './ocr.provider';
 
 const MAX_ROWS = 1000;
@@ -364,7 +364,7 @@ export class ImportService {
         products: (row.productsDiscussed ?? []).map((p) => p.trim()).filter(Boolean),
         requirements: row.customerRequirements?.trim() || undefined,
         budget: row.budget,
-        followUpRequired: row.followUpRequired ?? false,
+        followUpRequired: withFollowUpConsistency(row.followUpRequired ?? false, row.sentiment),
         followUpDate: row.followUpDate ? new Date(row.followUpDate) : undefined,
         summary: row.summary?.trim() || undefined,
         sentiment: row.sentiment,
@@ -636,8 +636,9 @@ export class ImportService {
       : undefined;
 
     const followUpRequiredRaw = cols.followUpRequired ? this.cellText(row.getCell(cols.followUpRequired).value) : '';
-    const followUpRequired = /^(yes|true|1)$/i.test(followUpRequiredRaw.trim());
     const followUpDate = cols.followUpDate ? (this.parseDate(row.getCell(cols.followUpDate).value) ?? undefined) : undefined;
+    const sentimentValue = cols.sentiment ? this.parseSentiment(this.cellText(row.getCell(cols.sentiment).value)) : undefined;
+    const followUpRequired = withFollowUpConsistency(/^(yes|true|1)$/i.test(followUpRequiredRaw.trim()), sentimentValue);
 
     const productsRaw = cols.products ? this.cellText(row.getCell(cols.products).value) : '';
     const products = productsRaw
@@ -678,7 +679,7 @@ export class ImportService {
       followUpRequired,
       followUpDate,
       summary: cols.summary ? this.cellText(row.getCell(cols.summary).value) || undefined : undefined,
-      sentiment: cols.sentiment ? this.parseSentiment(this.cellText(row.getCell(cols.sentiment).value)) : undefined,
+      sentiment: sentimentValue,
     };
   }
 
