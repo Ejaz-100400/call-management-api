@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { parseIstTimestamp } from '../common/timezone.util';
 import { BusinessNumbersService } from '../business-numbers/business-numbers.service';
+import { sendCallNotificationSms } from '../notifications/sms.provider';
 
 @Injectable()
 export class WebhooksService {
@@ -63,7 +64,33 @@ export class WebhooksService {
       callSid,
     });
 
+    // Fire-and-forget: the customer's real number never shows up on a
+    // technician's phone (Exotel/carrier forwarding means the caller ID they
+    // see is always the ExoPhone), so the team gets it by SMS instead. Not
+    // awaited -- a slow/failed SMS send should never hold up the webhook
+    // response or the actual call-processing pipeline.
+    if (callerPhone) {
+      this.notifyTeam(callerPhone, payload).catch((err) =>
+        this.logger.warn(`Call notification SMS failed: ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }
+
     return { received: true, callId: call.id };
+  }
+
+  private async notifyTeam(callerPhone: string, payload: Record<string, unknown>) {
+    const employees = await this.prisma.employee.findMany({ where: { active: true }, select: { phone: true } });
+    const recipients = employees.map((e) => e.phone).filter((p): p is string => Boolean(p));
+    if (recipients.length === 0) return;
+
+    const dialCallStatus = (payload.DialCallStatus as string | undefined)?.toLowerCase();
+    const durationSeconds = Number(payload.DialCallDuration ?? 0) || 0;
+
+    await sendCallNotificationSms(recipients, {
+      customerPhone: callerPhone,
+      durationSeconds,
+      status: dialCallStatus === 'completed' ? 'completed' : 'missed',
+    });
   }
 
   private findOrCreateCustomer(phoneNumber: string) {
