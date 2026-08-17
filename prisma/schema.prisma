@@ -131,6 +131,8 @@ model CallExtraction {
 
   @@index([businessCategory], map: "idx_extractions_business_cat")
   @@index([carModel(ops: raw("gin_trgm_ops"))], map: "idx_extractions_car_model_trgm", type: Gin)
+  @@index([carMake], map: "idx_extractions_car_make")
+  @@index([carModel], map: "idx_extractions_car_model_btree")
   @@index([sentiment], map: "idx_extractions_sentiment")
   @@map("call_extractions")
   @@schema("public")
