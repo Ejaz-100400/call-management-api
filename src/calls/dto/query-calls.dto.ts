@@ -45,6 +45,12 @@ export class QueryCallsDto {
   category?: ('car_glasses' | 'car_modifications' | 'unknown')[];
 
   @IsOptional()
+  @ToArray()
+  @IsArray()
+  @IsIn(['pending', 'processing', 'completed', 'failed'], { each: true })
+  status?: ('pending' | 'processing' | 'completed' | 'failed')[];
+
+  @IsOptional()
   @IsDateString()
   dateFrom?: string;
 

@@ -34,6 +34,7 @@ export class CallsService {
 
     const where: Prisma.CallWhereInput = {
       ...(query.category?.length && { businessCategory: { in: query.category } }),
+      ...(query.status?.length && { status: { in: query.status } }),
       ...(query.employeeId?.length && { employeeId: { in: query.employeeId } }),
       ...((query.dateFrom || query.dateTo) && {
         callDate: {
