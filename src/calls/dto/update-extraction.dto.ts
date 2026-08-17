@@ -1,4 +1,4 @@
-import { IsBoolean, IsDateString, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class UpdateExtractionDto {
   @IsOptional() @IsString() customerName?: string;
@@ -6,6 +6,7 @@ export class UpdateExtractionDto {
   @IsOptional() @IsString() carModel?: string;
   @IsOptional() @IsString() carVariant?: string;
   @IsOptional() @IsString() location?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) productsDiscussed?: string[];
   @IsOptional() @IsString() customerRequirements?: string;
   @IsOptional() @IsNumber() budget?: number;
   @IsOptional() @IsBoolean() followUpRequired?: boolean;

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { linkDiscussedProducts } from '../common/product-matching.util';
 import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { defaultFollowUpDueDate, withFollowUpConsistency } from '../follow-ups/follow-up.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -107,6 +108,7 @@ export class CallsService {
         carModel: dto.carModel,
         carVariant: dto.carVariant,
         location: dto.location,
+        productsDiscussed: dto.productsDiscussed,
         customerRequirements: dto.customerRequirements,
         budget: dto.budget,
         followUpRequired,
@@ -124,6 +126,7 @@ export class CallsService {
         carModel: dto.carModel,
         carVariant: dto.carVariant,
         location: dto.location,
+        productsDiscussed: dto.productsDiscussed,
         customerRequirements: dto.customerRequirements,
         budget: dto.budget,
         followUpRequired,
@@ -134,6 +137,14 @@ export class CallsService {
         editedAt: new Date(),
       },
     });
+
+    // productsDiscussed is stored both as the raw extraction snapshot above
+    // and, separately, as CallProduct links to the catalog (what Reports'
+    // product breakdown actually reads) -- keep the two in sync the same way
+    // the live pipeline and import already do.
+    if (dto.productsDiscussed !== undefined) {
+      await linkDiscussedProducts(this.prisma, callId, call.businessCategory, dto.productsDiscussed);
+    }
 
     // The Follow-ups page reads from the separate FollowUp table, not this
     // flag directly -- keep the two in sync whenever the flag/date changes
