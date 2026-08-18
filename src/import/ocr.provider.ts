@@ -226,6 +226,29 @@ function detectActualImageFormat(buffer: Buffer): 'jpeg' | 'png' | 'gif' | 'webp
   return 'unknown';
 }
 
+/**
+ * A valid magic-bytes header only proves the upload *started* correctly --
+ * a photo that got cut off mid-upload (flaky mobile connection, a scanning
+ * app closed too early) still has a fine-looking header but is truncated,
+ * and Claude's API rejects that as malformed with a raw, unhelpful error.
+ * JPEG and PNG both have a well-defined end-of-file marker, so checking for
+ * it catches this class of corruption cheaply, without a full image-parsing
+ * library.
+ */
+function looksTruncated(buffer: Buffer, format: 'jpeg' | 'png' | 'gif' | 'webp'): boolean {
+  if (format === 'jpeg') {
+    const last2 = buffer.subarray(-2);
+    return !(last2[0] === 0xff && last2[1] === 0xd9);
+  }
+  if (format === 'png') {
+    const iend = Buffer.from([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+    return !buffer.subarray(-8).equals(iend);
+  }
+  // GIF/WEBP don't have as cheap/reliable an end-marker check -- leave those
+  // to Claude's own validation rather than risk false positives.
+  return false;
+}
+
 const FORMAT_TO_MEDIA_TYPE: Record<string, SupportedMediaType> = {
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -252,6 +275,13 @@ export function resolveImageMediaType(buffer: Buffer, reportedMimeType: string):
   }
   if (actual === 'unknown') {
     return { error: "This file doesn't look like a valid image (its content doesn't match any supported image format) -- try re-saving or re-exporting it and upload again." };
+  }
+  if (looksTruncated(buffer, actual)) {
+    return {
+      error:
+        "This photo looks incomplete or got cut off during upload (a common cause: a weak connection while uploading). " +
+        "Try re-taking or re-exporting the photo, then upload it again.",
+    };
   }
   return { mediaType: FORMAT_TO_MEDIA_TYPE[actual] };
 }
@@ -304,7 +334,20 @@ export async function extractHandwrittenEntries(imageBuffer: Buffer, mediaType: 
   try {
     input = await requestExtraction(imageBuffer, mediaType);
   } catch {
-    input = await requestExtraction(imageBuffer, mediaType);
+    try {
+      input = await requestExtraction(imageBuffer, mediaType);
+    } catch (err) {
+      // Both attempts failed identically -- that's not sampling variance, so
+      // it's a real problem with this specific image (Claude's own image
+      // validation rejecting something our own checks didn't catch). Surface
+      // something actionable rather than Anthropic's raw API error text.
+      const message = (err as Error).message;
+      throw new Error(
+        /image|malformed|invalid/i.test(message)
+          ? "Claude couldn't read this image -- it may be corrupted or in an unsupported format. Try re-taking or re-exporting the photo, then upload it again."
+          : message,
+      );
+    }
   }
 
   const raw = input.entries;
