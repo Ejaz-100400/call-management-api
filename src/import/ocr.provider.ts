@@ -289,7 +289,13 @@ export function resolveImageMediaType(buffer: Buffer, reportedMimeType: string):
 async function requestExtraction(imageBuffer: Buffer, mediaType: SupportedMediaType) {
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-5',
-    max_tokens: 4096,
+    // A busy ledger page can have many rows, each with several free-text
+    // fields (rawNoteText, summary, customerRequirements, ...) -- 4096 was
+    // getting exhausted mid-generation on fuller pages, cutting the tool
+    // call's JSON off before "entries" closed properly and surfacing as
+    // "Malformed extraction response (entries was not a list)". Doubled to
+    // give real headroom for a full page of entries.
+    max_tokens: 8192,
     system:
       'You read photos of handwritten business notes (including cursive) for an automotive business and ' +
       'extract structured data precisely from what is actually written. Never guess or invent a fact about ' +
@@ -328,26 +334,38 @@ async function requestExtraction(imageBuffer: Buffer, mediaType: SupportedMediaT
 }
 
 export async function extractHandwrittenEntries(imageBuffer: Buffer, mediaType: SupportedMediaType): Promise<ExtractedEntry[]> {
-  // Structured extraction over a large schema occasionally comes back malformed
-  // (sampling variance, not a code bug) -- one retry clears it in practice.
-  let input: { pageDate?: string; entries: Partial<ExtractedEntry>[] };
-  try {
-    input = await requestExtraction(imageBuffer, mediaType);
-  } catch {
+  // Structured extraction over a large schema occasionally comes back
+  // malformed (sampling variance, not a code bug) -- a couple of retries
+  // clears it in practice. A busy ledger page hitting the token limit
+  // (see requestExtraction's max_tokens comment) is the other common cause;
+  // that's now far less likely with the larger budget, but still possible
+  // on an unusually dense page, hence the ATTEMPTS budget below.
+  const ATTEMPTS = 3;
+  let input: { pageDate?: string; entries: Partial<ExtractedEntry>[] } | undefined;
+  let lastError: Error | undefined;
+  for (let i = 0; i < ATTEMPTS; i++) {
     try {
       input = await requestExtraction(imageBuffer, mediaType);
+      break;
     } catch (err) {
-      // Both attempts failed identically -- that's not sampling variance, so
-      // it's a real problem with this specific image (Claude's own image
-      // validation rejecting something our own checks didn't catch). Surface
-      // something actionable rather than Anthropic's raw API error text.
-      const message = (err as Error).message;
+      lastError = err as Error;
+    }
+  }
+  if (!input) {
+    // All attempts failed identically -- that's not sampling variance
+    // anymore, so give a reason a reviewer can actually act on instead of
+    // the raw internal error string.
+    const message = lastError!.message;
+    if (/entries was not a list/i.test(message)) {
       throw new Error(
-        /image|malformed|invalid/i.test(message)
-          ? "Claude couldn't read this image -- it may be corrupted or in an unsupported format. Try re-taking or re-exporting the photo, then upload it again."
-          : message,
+        "This page has too much handwriting for Claude to read in one pass -- try splitting it into two photos (e.g. top half and bottom half) and uploading each separately.",
       );
     }
+    throw new Error(
+      /image|malformed|invalid/i.test(message)
+        ? "Claude couldn't read this image -- it may be corrupted or in an unsupported format. Try re-taking or re-exporting the photo, then upload it again."
+        : message,
+    );
   }
 
   const raw = input.entries;
