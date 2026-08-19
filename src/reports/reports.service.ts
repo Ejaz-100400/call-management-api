@@ -133,8 +133,9 @@ export class ReportsService {
    * later in category order for a period near the boundary); pivot into one
    * row per period first, then take the most recent 90 periods.
    */
-  async callsByPeriod(granularity: 'daily' | 'weekly' | 'monthly' = 'daily', filters: QueryReportsDto = {}) {
-    const trunc = granularity === 'monthly' ? 'month' : granularity === 'weekly' ? 'week' : 'day';
+  async callsByPeriod(granularity: 'hourly' | 'daily' | 'weekly' | 'monthly' = 'daily', filters: QueryReportsDto = {}) {
+    const trunc =
+      granularity === 'monthly' ? 'month' : granularity === 'weekly' ? 'week' : granularity === 'hourly' ? 'hour' : 'day';
     const needsJoin = this.needsExtractionJoin(filters);
     const conditions = this.buildCallConditions(filters, 'calls', needsJoin ? 'ce' : undefined);
     const whereSql = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;

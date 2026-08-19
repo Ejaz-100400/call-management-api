@@ -12,7 +12,7 @@ export class ReportsController {
   }
 
   @Get('calls-by-period')
-  callsByPeriod(@Query('granularity') granularity: 'daily' | 'weekly' | 'monthly' | undefined, @Query() filters: QueryReportsDto) {
+  callsByPeriod(@Query('granularity') granularity: 'hourly' | 'daily' | 'weekly' | 'monthly' | undefined, @Query() filters: QueryReportsDto) {
     return this.reportsService.callsByPeriod(granularity, filters);
   }
 
