@@ -22,7 +22,10 @@ export class FollowUpsService {
       this.prisma.followUp.findMany({
         where,
         include: { call: { include: { customer: true } }, employee: true },
-        orderBy: { dueDate: 'asc' },
+        // Most recently created first (tracks the underlying call's
+        // recency) rather than soonest-due-first -- staff want to see
+        // follow-ups from calls that just happened at the top.
+        orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
