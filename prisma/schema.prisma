@@ -61,6 +61,7 @@ model Customer {
 model Call {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalCallId      String?          @unique @map("external_call_id")
+  direction           CallDirection    @default(inbound)
   businessCategory    BusinessCategory @map("business_category")
   employeeId          String?          @map("employee_id") @db.Uuid
   customerId          String?          @map("customer_id") @db.Uuid
@@ -719,6 +720,14 @@ enum CallStatus {
   failed
 
   @@map("call_status")
+  @@schema("public")
+}
+
+enum CallDirection {
+  inbound
+  outbound
+
+  @@map("call_direction")
   @@schema("public")
 }
 

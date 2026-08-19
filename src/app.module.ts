@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { BusinessNumbersModule } from './business-numbers/business-numbers.module';
 import { CallsModule } from './calls/calls.module';
@@ -17,6 +18,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     PrismaModule,
     QueueModule,
     AuthModule,
