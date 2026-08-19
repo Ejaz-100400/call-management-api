@@ -17,8 +17,8 @@ interface ExotelCallRecord {
 }
 
 interface ExotelCallsPage {
-  Metadata: { NextPageUri: string | null };
-  Calls: ExotelCallRecord[];
+  Metadata: { NextPageUri: string | null } | null;
+  Calls: ExotelCallRecord[] | null;
 }
 
 /**
@@ -46,7 +46,13 @@ async function fetchCallsPage(dateFrom: Date, dateTo: Date, afterCursor?: string
   const res = await fetch(`https://api.exotel.com/v1/Accounts/${accountSid}/Calls.json?${params.toString()}`, {
     headers: { Authorization: `Basic ${auth}` },
   });
-  if (!res.ok) throw new Error(`Exotel Calls list failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    // Include the body -- Exotel's 400s carry the actual reason (e.g. a date
+    // range wider than they allow), and without it the log just says "400"
+    // with no way to tell what was actually wrong.
+    const body = await res.text().catch(() => '');
+    throw new Error(`Exotel Calls list failed: HTTP ${res.status} ${body}`);
+  }
   return (await res.json()) as ExotelCallsPage;
 }
 
@@ -84,7 +90,11 @@ export async function syncOutboundCalls(
   // can't loop forever -- ample for any realistic sync window.
   for (let i = 0; i < 50; i++) {
     const page = await fetchCallsPage(dateFrom, dateTo, cursor);
-    const outbound = page.Calls.filter((c) => c.Direction === 'outbound-dial');
+    // Exotel returns Metadata/Calls as null (not an object with an empty
+    // array) when a narrow window genuinely has nothing in it -- the 10-
+    // minute recurring sync hits this on most ticks, since most 20-minute
+    // windows have zero outbound calls.
+    const outbound = (page.Calls ?? []).filter((c) => c.Direction === 'outbound-dial');
 
     for (const call of outbound) {
       const existing = await prisma.call.findUnique({ where: { externalCallId: call.Sid }, select: { id: true } });
@@ -125,7 +135,7 @@ export async function syncOutboundCalls(
       created++;
     }
 
-    const nextCursor = extractAfterCursor(page.Metadata.NextPageUri);
+    const nextCursor = extractAfterCursor(page.Metadata?.NextPageUri ?? null);
     if (!nextCursor) break;
     cursor = nextCursor;
   }

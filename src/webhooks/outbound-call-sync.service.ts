@@ -10,12 +10,14 @@ import { syncOutboundCalls } from './outbound-call-sync.provider';
  * available for this, so this polls Exotel's own Call list instead.
  *
  * Two passes:
- *  - On startup: a wide 60-day catch-up (covers this account's entire
- *    history -- the Exotel integration itself is only about a week old at
- *    time of writing). syncOutboundCalls is idempotent, so this re-running
- *    on every deploy/restart is harmless and cheap, just a quick no-op
- *    re-check once the backlog is caught up -- not worth the extra state
- *    to track "already ran once" given the modest call volume.
+ *  - On startup: a 29-day catch-up (covers this account's entire Exotel
+ *    history -- the integration itself is only about a week old at time of
+ *    writing; 29 rather than 30 is deliberate headroom, since a 60-day
+ *    request came back HTTP 400 -- Exotel appears to cap how wide a
+ *    DateCreated range it accepts). syncOutboundCalls is idempotent, so
+ *    this re-running on every deploy/restart is harmless and cheap, just a
+ *    quick no-op re-check once the backlog is caught up -- not worth the
+ *    extra state to track "already ran once" given the modest call volume.
  *  - Every 10 minutes after: a narrow 20-minute window (double the
  *    interval, so a slow tick or a brief gap never loses a call).
  *
@@ -37,7 +39,7 @@ export class OutboundCallSyncService implements OnModuleInit {
   async onModuleInit() {
     try {
       const now = new Date();
-      const from = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      const from = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
       await syncOutboundCalls(this.prisma, (job) => this.queue.enqueueCallProcessing(job), from, now);
     } catch (err) {
       this.logger.error(`Outbound call startup catch-up failed: ${(err as Error).message}`);
