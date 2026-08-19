@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { parseIstTimestamp } from '../common/timezone.util';
 import { BusinessNumbersService } from '../business-numbers/business-numbers.service';
-import { sendCallNotificationSms } from '../notifications/sms.provider';
+import { sendCallNotificationEmail } from './call-notification.provider';
 
 @Injectable()
 export class WebhooksService {
@@ -66,31 +66,43 @@ export class WebhooksService {
 
     // Fire-and-forget: the customer's real number never shows up on a
     // technician's phone (Exotel/carrier forwarding means the caller ID they
-    // see is always the ExoPhone), so the team gets it by SMS instead. Not
-    // awaited -- a slow/failed SMS send should never hold up the webhook
+    // see is always the ExoPhone), so the team gets it by email instead. Not
+    // awaited -- a slow/failed email send should never hold up the webhook
     // response or the actual call-processing pipeline.
     if (callerPhone) {
-      this.notifyTeam(callerPhone, payload).catch((err) =>
-        this.logger.warn(`Call notification SMS failed: ${err instanceof Error ? err.message : String(err)}`),
+      this.notifyTeam(callerPhone, businessNumber, payload).catch((err) =>
+        this.logger.warn(`Call notification email failed: ${err instanceof Error ? err.message : String(err)}`),
       );
     }
 
     return { received: true, callId: call.id };
   }
 
-  private async notifyTeam(callerPhone: string, payload: Record<string, unknown>) {
-    const employees = await this.prisma.employee.findMany({ where: { active: true }, select: { phone: true } });
-    const recipients = employees.map((e) => e.phone).filter((p): p is string => Boolean(p));
+  private async notifyTeam(callerPhone: string, businessNumber: string | undefined, payload: Record<string, unknown>) {
+    // An explicit, directly-configured list rather than pulling from the
+    // Employees table -- the two don't necessarily line up (not every
+    // employee record has an email on file, and not every notification
+    // recipient is necessarily an employee), so this is kept as its own
+    // env-configured list instead of guessing at a mapping between them.
+    const recipients = (process.env.CALL_NOTIFICATION_EMAILS ?? '')
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean);
     if (recipients.length === 0) return;
 
     const dialCallStatus = (payload.DialCallStatus as string | undefined)?.toLowerCase();
     const durationSeconds = Number(payload.DialCallDuration ?? 0) || 0;
+    const category = await this.businessNumbers.resolveCategory(businessNumber);
 
-    await sendCallNotificationSms(recipients, {
-      customerPhone: callerPhone,
-      durationSeconds,
-      status: dialCallStatus === 'completed' ? 'completed' : 'missed',
-    });
+    await sendCallNotificationEmail(
+      {
+        customerPhone: callerPhone,
+        durationSeconds,
+        category,
+        status: dialCallStatus === 'completed' ? 'completed' : 'missed',
+      },
+      recipients,
+    );
   }
 
   private findOrCreateCustomer(phoneNumber: string) {
