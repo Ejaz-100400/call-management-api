@@ -38,6 +38,11 @@ export class CallsController {
     return this.callsService.findDuplicates();
   }
 
+  @Get('missed')
+  findMissed(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    return this.callsService.findMissed(page ? Number(page) : undefined, pageSize ? Number(pageSize) : undefined);
+  }
+
   @Post('duplicates/:id/merge')
   @Roles('admin')
   mergeCalls(@Param('id', ParseUUIDPipe) duplicateId: string, @Body('canonicalId', ParseUUIDPipe) canonicalId: string, @CurrentUser() user: User) {

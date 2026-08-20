@@ -68,6 +68,48 @@ export class CallsService {
     return { items, total, page, pageSize };
   }
 
+  /**
+   * A missed call only stays actionable for a day, and stops being
+   * actionable the moment someone actually calls the customer back --
+   * whichever happens first. "Resolved by callback" is determined by
+   * comparing against this customer's *latest* outbound call: if it's after
+   * this particular miss, some callback covers it (correct even with
+   * several misses interleaved with callbacks, since the latest outbound
+   * time is the most favorable check -- if even the latest one is still
+   * before this miss, nothing later exists that could resolve it).
+   */
+  async findMissed(page = 1, pageSize = 25) {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const candidates = await this.prisma.call.findMany({
+      where: { direction: 'inbound', status: 'failed', callDate: { gte: cutoff }, customerId: { not: null } },
+      include: { customer: true, employee: true },
+      orderBy: { callDate: 'desc' },
+    });
+
+    const customerIds = [...new Set(candidates.map((c) => c.customerId!))];
+    const outboundCalls = customerIds.length
+      ? await this.prisma.call.findMany({
+          where: { direction: 'outbound', customerId: { in: customerIds } },
+          select: { customerId: true, callDate: true },
+        })
+      : [];
+    const latestOutboundByCustomer = new Map<string, Date>();
+    for (const o of outboundCalls) {
+      const cur = latestOutboundByCustomer.get(o.customerId!);
+      if (!cur || o.callDate > cur) latestOutboundByCustomer.set(o.customerId!, o.callDate);
+    }
+
+    const active = candidates.filter((c) => {
+      const latestOutbound = latestOutboundByCustomer.get(c.customerId!);
+      return !(latestOutbound && latestOutbound > c.callDate);
+    });
+
+    const total = active.length;
+    const items = active.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+    return { items, total, page, pageSize };
+  }
+
   async findOne(id: string) {
     const call = await this.prisma.call.findUnique({
       where: { id },
