@@ -95,6 +95,16 @@ export class CallsService {
     const sentiment = dto.sentiment !== undefined ? dto.sentiment : existing?.sentiment;
     const followUpRequired = withFollowUpConsistency(dto.followUpRequired ?? existing?.followUpRequired ?? false, sentiment);
 
+    // customerName was previously stored as whatever the form sent verbatim,
+    // including "" when a reviewer cleared the field -- but "" doesn't equal
+    // null in a ?? fallback chain, so a "cleared" name still displayed the
+    // stale value everywhere the UI falls back on a missing name. Distinguish
+    // "field not sent" (undefined, leave untouched) from "field sent blank"
+    // (null, actually clear it) so clearing the field actually clears it.
+    const customerNameProvided = dto.customerName !== undefined;
+    const trimmedCustomerName = dto.customerName?.trim();
+    const customerNameForExtraction = customerNameProvided ? trimmedCustomerName || null : undefined;
+
     // Calls that never got a real recording/transcript (missed, unanswered,
     // still-failed telephony webhooks) have no CallExtraction row at all --
     // upsert rather than requiring one to already exist, so those calls can
@@ -104,7 +114,7 @@ export class CallsService {
       create: {
         callId,
         businessCategory: call.businessCategory,
-        customerName: dto.customerName,
+        customerName: customerNameForExtraction ?? null,
         carMake: dto.carMake,
         carModel: dto.carModel,
         carVariant: dto.carVariant,
@@ -122,7 +132,7 @@ export class CallsService {
         editedAt: new Date(),
       },
       update: {
-        customerName: dto.customerName,
+        customerName: customerNameForExtraction,
         carMake: dto.carMake,
         carModel: dto.carModel,
         carVariant: dto.carVariant,
@@ -158,11 +168,15 @@ export class CallsService {
 
     // customerName here only edits this call's own extraction snapshot --
     // the Customer page searches Customer.name, a separate column, so an
-    // edit here would otherwise never show up there. Propagate it.
-    if (dto.customerName?.trim()) {
+    // edit here would otherwise never show up there. Propagate it, including
+    // clearing it -- a reviewer blanking out a wrongly-extracted name (e.g.
+    // the AI mistaking the agent's name in the transcript for the caller's)
+    // needs that to actually take, not just cosmetically hide until the next
+    // page load.
+    if (customerNameProvided) {
       const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { customerId: true } });
       if (call?.customerId) {
-        await this.prisma.customer.update({ where: { id: call.customerId }, data: { name: dto.customerName.trim() } });
+        await this.prisma.customer.update({ where: { id: call.customerId }, data: { name: trimmedCustomerName || null } });
       }
     }
 
