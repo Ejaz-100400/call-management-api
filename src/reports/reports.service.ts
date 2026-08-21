@@ -8,7 +8,7 @@ import { QueryReportsDto } from './dto/query-reports.dto';
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
-  /** Shared category/employee/date-range/vehicle/sentiment/product filter, applied consistently across every report. */
+  /** Shared category/branch/employee/date-range/vehicle/sentiment/product filter, applied consistently across every report. */
   private buildCallWhere(filters: QueryReportsDto): Prisma.CallWhereInput {
     const extractionFilter: Prisma.CallExtractionWhereInput = {
       ...(filters.carMake?.length && { carMake: { in: filters.carMake } }),
@@ -18,6 +18,7 @@ export class ReportsService {
 
     return {
       ...(filters.category?.length && { businessCategory: { in: filters.category } }),
+      ...(filters.branch?.length && { branch: { in: filters.branch } }),
       ...(filters.employeeId?.length && { employeeId: { in: filters.employeeId } }),
       ...((filters.dateFrom || filters.dateTo) && {
         callDate: {
@@ -257,6 +258,24 @@ export class ReportsService {
       LIMIT ${limit};
     `);
     return rows.map((r) => ({ name: r.name, count: Number(r.count) }));
+  }
+
+  /**
+   * Tracked from the point the branch field was introduced onward -- older
+   * calls have no branch set and are deliberately excluded here rather than
+   * counted as an "unknown" bucket, since that would understate how
+   * complete the data actually is going forward.
+   */
+  async byBranch(filters: QueryReportsDto = {}) {
+    const base = this.buildCallWhere(filters);
+    const rows = await this.prisma.call.groupBy({
+      by: ['branch'],
+      where: { ...base, branch: { not: null } },
+      _count: true,
+    });
+    return rows
+      .map((r) => ({ branch: r.branch as string, count: r._count }))
+      .sort((a, b) => b.count - a.count);
   }
 
   /**

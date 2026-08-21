@@ -13,4 +13,9 @@ export class UpdateCallDto {
   @IsOptional()
   @IsString()
   employeeId?: string;
+
+  // Empty string means "clear" -- same convention as employeeId above.
+  @IsOptional()
+  @IsIn(['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry', ''])
+  branch?: 'ambattur' | 'kattankulathur' | 'sithalapakkam' | 'pondicherry' | '';
 }

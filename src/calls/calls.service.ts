@@ -36,6 +36,7 @@ export class CallsService {
       ...(query.category?.length && { businessCategory: { in: query.category } }),
       ...(query.status?.length && { status: { in: query.status } }),
       ...(query.employeeId?.length && { employeeId: { in: query.employeeId } }),
+      ...(query.branch?.length && { branch: { in: query.branch } }),
       ...((query.dateFrom || query.dateTo) && {
         callDate: {
           ...(query.dateFrom && { gte: startOfDayIST(query.dateFrom) }),
@@ -314,6 +315,7 @@ export class CallsService {
         businessCategory: dto.businessCategory,
         callDate: dto.callDate ? new Date(dto.callDate) : undefined,
         employeeId: dto.employeeId !== undefined ? dto.employeeId || null : undefined,
+        branch: dto.branch !== undefined ? dto.branch || null : undefined,
       },
       include: { customer: true, employee: true, extraction: true },
     });

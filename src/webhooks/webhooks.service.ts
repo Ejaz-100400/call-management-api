@@ -62,6 +62,11 @@ export class WebhooksService {
         businessCategory: await this.businessNumbers.resolveCategory(businessNumber),
         customerId: customer?.id,
         employeeId: employeeId ?? undefined,
+        // Every inbound call is answered at Ambattur -- staff redirect to
+        // one of the other three branches by editing this when a customer
+        // turns out to be nearer one of them, rather than the other way
+        // around.
+        branch: 'ambattur',
         callDate,
         durationSeconds: 0, // corrected once the worker fetches real call details
         recordingStorageKey: null, // filled in once the worker uploads it to object storage

@@ -98,6 +98,12 @@ model Call {
   externalCallId      String?          @unique @map("external_call_id")
   direction           CallDirection    @default(inbound)
   businessCategory    BusinessCategory @map("business_category")
+  // Which physical location this customer was ultimately routed to. The
+  // team answers every call at Ambattur (the headquarters) and redirects
+  // from there when a customer is nearer one of the other three branches --
+  // tracked from here on rather than backfilled onto older calls, since
+  // there's no reliable way to know it for those retroactively.
+  branch              Branch?
   employeeId          String?          @map("employee_id") @db.Uuid
   customerId          String?          @map("customer_id") @db.Uuid
   callDate            DateTime         @map("call_date") @db.Timestamptz(6)
@@ -745,6 +751,16 @@ enum BusinessCategory {
   unknown
 
   @@map("business_category")
+  @@schema("public")
+}
+
+enum Branch {
+  ambattur
+  kattankulathur
+  sithalapakkam
+  pondicherry
+
+  @@map("branch")
   @@schema("public")
 }
 

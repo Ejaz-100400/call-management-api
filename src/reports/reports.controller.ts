@@ -46,6 +46,11 @@ export class ReportsController {
     return this.reportsService.topEmployees(limit ? Number(limit) : undefined, filters);
   }
 
+  @Get('branches')
+  byBranch(@Query() filters: QueryReportsDto) {
+    return this.reportsService.byBranch(filters);
+  }
+
   @Get('customer-call-history')
   customerCallHistory(
     @Query('page') page: string | undefined,

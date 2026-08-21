@@ -17,6 +17,12 @@ export class QueryReportsDto {
   @IsOptional()
   @ToArray()
   @IsArray()
+  @IsIn(['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'], { each: true })
+  branch?: ('ambattur' | 'kattankulathur' | 'sithalapakkam' | 'pondicherry')[];
+
+  @IsOptional()
+  @ToArray()
+  @IsArray()
   @IsString({ each: true })
   carMake?: string[];
 

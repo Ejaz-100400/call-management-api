@@ -51,6 +51,12 @@ export class QueryCallsDto {
   status?: ('pending' | 'processing' | 'completed' | 'failed')[];
 
   @IsOptional()
+  @ToArray()
+  @IsArray()
+  @IsIn(['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'], { each: true })
+  branch?: ('ambattur' | 'kattankulathur' | 'sithalapakkam' | 'pondicherry')[];
+
+  @IsOptional()
   @IsDateString()
   dateFrom?: string;
 
