@@ -48,6 +48,14 @@ model Customer {
   name        String?
   phoneNumber String   @unique @map("phone_number")
   notes       String?
+  // Carried forward from the most recent call's AI extraction / manual edit,
+  // so a returning customer's vehicle details don't need re-entering every
+  // time they call -- see backfillCustomerVehicleInfo in process-call.ts and
+  // the propagation in calls.service.ts's updateExtraction.
+  carMake     String?  @map("car_make")
+  carModel    String?  @map("car_model")
+  carVariant  String?  @map("car_variant")
+  location    String?
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
   calls       Call[]

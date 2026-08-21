@@ -65,16 +65,48 @@ export class CallsService {
       this.prisma.call.count({ where }),
     ]);
 
-    return { items, total, page, pageSize };
+    return { items: await this.withResolvedFlag(items), total, page, pageSize };
+  }
+
+  /**
+   * Marks a failed call as `resolved` when the same customer has since had
+   * any completed call, inbound or outbound -- a customer who simply
+   * redialed and got through counts the same as a staff callback, since
+   * either way we did end up reaching them. Only computed for the page of
+   * failed calls actually being displayed, not the whole table.
+   */
+  private async withResolvedFlag<T extends { id: string; customerId: string | null; status: string; callDate: Date }>(
+    items: T[],
+  ): Promise<(T & { resolved?: boolean })[]> {
+    const failedCustomerIds = [...new Set(items.filter((c) => c.status === 'failed' && c.customerId).map((c) => c.customerId!))];
+    if (failedCustomerIds.length === 0) return items;
+
+    const laterCompleted = await this.prisma.call.findMany({
+      where: { customerId: { in: failedCustomerIds }, status: 'completed' },
+      select: { customerId: true, callDate: true },
+    });
+    const latestCompletedByCustomer = new Map<string, Date>();
+    for (const c of laterCompleted) {
+      const cur = latestCompletedByCustomer.get(c.customerId!);
+      if (!cur || c.callDate > cur) latestCompletedByCustomer.set(c.customerId!, c.callDate);
+    }
+
+    return items.map((c) => {
+      if (c.status !== 'failed' || !c.customerId) return c;
+      const latest = latestCompletedByCustomer.get(c.customerId);
+      return { ...c, resolved: !!latest && latest > c.callDate };
+    });
   }
 
   /**
    * A missed call only stays actionable for a day, and stops being
-   * actionable the moment someone actually calls the customer back --
-   * whichever happens first. "Resolved by callback" is determined by
-   * comparing against this customer's *latest* outbound call: if it's after
-   * this particular miss, some callback covers it (correct even with
-   * several misses interleaved with callbacks, since the latest outbound
+   * actionable the moment the customer is actually reached -- whichever
+   * happens first. "Resolved" covers both a staff outbound callback AND the
+   * customer simply redialing and getting through on their own; either way
+   * we did end up speaking to them. Determined by comparing against this
+   * customer's *latest* completed call of either direction: if it's after
+   * this particular miss, something covers it (correct even with several
+   * misses interleaved with successful calls, since the latest completed
    * time is the most favorable check -- if even the latest one is still
    * before this miss, nothing later exists that could resolve it).
    */
@@ -88,21 +120,21 @@ export class CallsService {
     });
 
     const customerIds = [...new Set(candidates.map((c) => c.customerId!))];
-    const outboundCalls = customerIds.length
+    const completedCalls = customerIds.length
       ? await this.prisma.call.findMany({
-          where: { direction: 'outbound', customerId: { in: customerIds } },
+          where: { status: 'completed', customerId: { in: customerIds } },
           select: { customerId: true, callDate: true },
         })
       : [];
-    const latestOutboundByCustomer = new Map<string, Date>();
-    for (const o of outboundCalls) {
-      const cur = latestOutboundByCustomer.get(o.customerId!);
-      if (!cur || o.callDate > cur) latestOutboundByCustomer.set(o.customerId!, o.callDate);
+    const latestCompletedByCustomer = new Map<string, Date>();
+    for (const o of completedCalls) {
+      const cur = latestCompletedByCustomer.get(o.customerId!);
+      if (!cur || o.callDate > cur) latestCompletedByCustomer.set(o.customerId!, o.callDate);
     }
 
     const active = candidates.filter((c) => {
-      const latestOutbound = latestOutboundByCustomer.get(c.customerId!);
-      return !(latestOutbound && latestOutbound > c.callDate);
+      const latestCompleted = latestCompletedByCustomer.get(c.customerId!);
+      return !(latestCompleted && latestCompleted > c.callDate);
     });
 
     const total = active.length;
@@ -127,7 +159,7 @@ export class CallsService {
   }
 
   async updateExtraction(callId: string, dto: UpdateExtractionDto, editedById: string) {
-    const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { businessCategory: true } });
+    const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { businessCategory: true, customerId: true } });
     if (!call) throw new NotFoundException(`Call ${callId} not found`);
 
     // This is a PATCH -- a field the caller didn't send should keep whatever
@@ -215,10 +247,24 @@ export class CallsService {
     // the AI mistaking the agent's name in the transcript for the caller's)
     // needs that to actually take, not just cosmetically hide until the next
     // page load.
-    if (customerNameProvided) {
-      const call = await this.prisma.call.findUnique({ where: { id: callId }, select: { customerId: true } });
-      if (call?.customerId) {
-        await this.prisma.customer.update({ where: { id: call.customerId }, data: { name: trimmedCustomerName || null } });
+    if (customerNameProvided && call.customerId) {
+      await this.prisma.customer.update({ where: { id: call.customerId }, data: { name: trimmedCustomerName || null } });
+    }
+
+    // Same idea for the vehicle fields, but a reviewer confirming a detail
+    // here is trusted more than a fresh AI guess on some future call -- only
+    // overwrite the customer's saved value when this edit actually supplies
+    // one, never clear it just because this particular call's field is
+    // blank (a call can legitimately have no vehicle info gathered without
+    // that meaning the customer's known vehicle changed).
+    if (call.customerId) {
+      const vehicleUpdates: Record<string, string> = {};
+      if (dto.carMake?.trim()) vehicleUpdates.carMake = dto.carMake.trim();
+      if (dto.carModel?.trim()) vehicleUpdates.carModel = dto.carModel.trim();
+      if (dto.carVariant?.trim()) vehicleUpdates.carVariant = dto.carVariant.trim();
+      if (dto.location?.trim()) vehicleUpdates.location = dto.location.trim();
+      if (Object.keys(vehicleUpdates).length > 0) {
+        await this.prisma.customer.update({ where: { id: call.customerId }, data: vehicleUpdates });
       }
     }
 
@@ -271,6 +317,18 @@ export class CallsService {
       },
       include: { customer: true, employee: true, extraction: true },
     });
+
+    // FollowUp.assignedTo is its own column, only ever seeded once at the
+    // moment a follow-up is first created (syncFollowUp/process-call.ts) --
+    // it was never kept in sync afterward, so reassigning a call's employee
+    // here left the Follow-ups page permanently showing "Unassigned" even
+    // after a manual edit. Keep them in lockstep going forward.
+    if (dto.employeeId !== undefined) {
+      await this.prisma.followUp.updateMany({
+        where: { callId: id },
+        data: { assignedTo: dto.employeeId || null },
+      });
+    }
 
     await this.prisma.auditLog.create({
       data: {

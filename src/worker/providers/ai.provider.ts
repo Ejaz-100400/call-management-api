@@ -7,6 +7,7 @@ export interface ExtractionResult {
   carMake: string | null;
   carModel: string | null;
   carVariant: string | null;
+  location: string | null;
   productsDiscussed: string[];
   customerRequirements: string | null;
   budget: number | null;
@@ -48,6 +49,10 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
           'naming). Omit if not mentioned.',
       },
       carVariant: { type: 'string', description: 'e.g. VXI, SX(O). Omit if not mentioned' },
+      location: {
+        type: 'string',
+        description: 'Customer\'s city/area/locality, only if they stated one. Omit if not mentioned.',
+      },
       productsDiscussed: {
         type: 'array',
         items: { type: 'string' },
@@ -112,6 +117,7 @@ export async function extractCallInfo(
     carMake: raw.carMake ?? null,
     carModel: raw.carModel ?? null,
     carVariant: raw.carVariant ?? null,
+    location: raw.location ?? null,
     productsDiscussed: raw.productsDiscussed ?? [],
     customerRequirements: raw.customerRequirements ?? null,
     budget: raw.budget ?? null,

@@ -33,3 +33,8 @@ export function parseIstTimestamp(raw: string): Date | null {
   const utcMs = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
   return new Date(utcMs - IST_OFFSET_MS);
 }
+
+/** The IST wall-clock hour (0-23) a given instant falls on. */
+export function istHour(date: Date): number {
+  return new Date(date.getTime() + IST_OFFSET_MS).getUTCHours();
+}

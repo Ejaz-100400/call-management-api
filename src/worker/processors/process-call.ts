@@ -94,6 +94,8 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     // A call that reads as needing follow-up should always get a task.
     extraction.followUpRequired = withFollowUpConsistency(extraction.followUpRequired, extraction.sentiment);
 
+    await fillFromKnownCustomer(call.customerId, extraction);
+
     await prisma.callExtraction.upsert({
       where: { callId },
       create: {
@@ -103,6 +105,7 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
         carMake: extraction.carMake,
         carModel: extraction.carModel,
         carVariant: extraction.carVariant,
+        location: extraction.location,
         productsDiscussed: extraction.productsDiscussed,
         customerRequirements: extraction.customerRequirements,
         budget: extraction.budget,
@@ -118,6 +121,7 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
         carMake: extraction.carMake,
         carModel: extraction.carModel,
         carVariant: extraction.carVariant,
+        location: extraction.location,
         productsDiscussed: extraction.productsDiscussed,
         customerRequirements: extraction.customerRequirements,
         budget: extraction.budget,
@@ -133,6 +137,7 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     });
 
     await backfillCustomerName(call.customerId, extraction.customerName);
+    await backfillCustomerVehicleInfo(call.customerId, extraction);
 
     if (extraction.followUpRequired) {
       // Callers often say "call me back" without a specific date -- default
@@ -207,4 +212,55 @@ async function backfillCustomerName(customerId: string | null, customerName: str
     where: { id: customerId, name: null },
     data: { name: customerName },
   });
+}
+
+/**
+ * A returning customer's vehicle rarely comes up again in a later call --
+ * they call assuming we already know it. Before this call's own extraction
+ * is saved, fill in whatever the AI didn't pick up on THIS transcript from
+ * the customer's saved profile (a prior call's confirmed details), so the
+ * call record itself carries the known vehicle forward rather than showing
+ * blank fields the customer never had to repeat.
+ */
+async function fillFromKnownCustomer(customerId: string | null, extraction: Awaited<ReturnType<typeof extractCallInfo>>) {
+  if (!customerId) return;
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { carMake: true, carModel: true, carVariant: true, location: true },
+  });
+  if (!customer) return;
+  extraction.carMake ??= customer.carMake;
+  extraction.carModel ??= customer.carModel;
+  extraction.carVariant ??= customer.carVariant;
+  extraction.location ??= customer.location;
+}
+
+/**
+ * The reverse direction of fillFromKnownCustomer: once this call's
+ * extraction is settled, save any newly-learned vehicle details back to the
+ * customer's profile so the NEXT call starts from them too. Only fills gaps
+ * (never overwrites an existing saved value) -- an automatic extraction on
+ * one call shouldn't silently clobber a detail a staff member already
+ * confirmed on a previous one; that only happens through a deliberate edit
+ * (see updateExtraction in calls.service.ts).
+ */
+async function backfillCustomerVehicleInfo(
+  customerId: string | null,
+  extraction: { carMake: string | null; carModel: string | null; carVariant: string | null; location: string | null },
+) {
+  if (!customerId) return;
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { carMake: true, carModel: true, carVariant: true, location: true },
+  });
+  if (!customer) return;
+
+  const data: Record<string, string> = {};
+  if (!customer.carMake && extraction.carMake) data.carMake = extraction.carMake;
+  if (!customer.carModel && extraction.carModel) data.carModel = extraction.carModel;
+  if (!customer.carVariant && extraction.carVariant) data.carVariant = extraction.carVariant;
+  if (!customer.location && extraction.location) data.location = extraction.location;
+  if (Object.keys(data).length === 0) return;
+
+  await prisma.customer.update({ where: { id: customerId }, data });
 }

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { parseIstTimestamp } from '../common/timezone.util';
 import { BusinessNumbersService } from '../business-numbers/business-numbers.service';
+import { EmployeesService } from '../employees/employees.service';
 import { sendCallNotificationEmail } from './call-notification.provider';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class WebhooksService {
     private prisma: PrismaService,
     private queue: QueueService,
     private businessNumbers: BusinessNumbersService,
+    private employees: EmployeesService,
   ) {}
 
   async handleCallCompleted(payload: Record<string, unknown>) {
@@ -34,6 +36,10 @@ export class WebhooksService {
     const callerPhone = ((payload.From ?? payload.CallFrom) as string | undefined)?.trim();
     const businessNumber = (payload.To ?? payload.CallTo) as string | undefined;
     const currentTime = (payload.CurrentTime ?? payload.Created) as string | undefined;
+    // The specific agent number the Connect applet actually dialed within
+    // the group -- used to auto-assign the employee below. Only present on
+    // flows that route through a Connect-to-number/group applet.
+    const dialedNumber = payload.DialWhomNumber as string | undefined;
 
     // A Connect applet's own dial-out to a co-worker/group member fires a
     // second call-completed webhook where CallFrom is the ExoPhone itself,
@@ -45,13 +51,18 @@ export class WebhooksService {
     }
 
     const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
+    const callDate = (currentTime ? parseIstTimestamp(currentTime) : null) ?? new Date();
+    // Best-effort default, not a final say -- always correctable afterward
+    // from the call or follow-up itself (see Employees page / CallDetails).
+    const employeeId = dialedNumber ? await this.employees.resolveForCall(dialedNumber, callDate) : null;
 
     const call = await this.prisma.call.create({
       data: {
         externalCallId: callSid ?? undefined,
         businessCategory: await this.businessNumbers.resolveCategory(businessNumber),
         customerId: customer?.id,
-        callDate: (currentTime && parseIstTimestamp(currentTime)) ?? new Date(),
+        employeeId: employeeId ?? undefined,
+        callDate,
         durationSeconds: 0, // corrected once the worker fetches real call details
         recordingStorageKey: null, // filled in once the worker uploads it to object storage
         status: 'pending',

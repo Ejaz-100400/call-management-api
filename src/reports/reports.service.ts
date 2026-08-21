@@ -85,9 +85,8 @@ export class ReportsService {
       followUpsPending,
       followUpsOverdue,
       durationAgg,
-      budgetAgg,
       sentimentCounts,
-      distinctCustomers,
+      customerCallCounts,
     ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
@@ -96,15 +95,17 @@ export class ReportsService {
       this.prisma.followUp.count({ where: { status: 'pending', call: base } }),
       this.prisma.followUp.count({ where: { status: 'pending', dueDate: { lt: new Date() }, call: base } }),
       this.prisma.call.aggregate({ where: base, _avg: { durationSeconds: true } }),
-      this.prisma.callExtraction.aggregate({ where: { call: base }, _sum: { budget: true } }),
       this.prisma.callExtraction.groupBy({ by: ['sentiment'], where: { sentiment: { not: null }, call: base }, _count: true }),
-      this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } } }),
+      this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } }, _count: true }),
     ]);
 
     const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
     const interestedCount = sentimentCounts.find((s) => s.sentiment === 'interested')?._count ?? 0;
-    const totalBudget = budgetAgg._sum.budget != null ? Number(budgetAgg._sum.budget) : 0;
-    const customerCount = distinctCustomers.length;
+    const customerCount = customerCallCounts.length;
+    // A "returning" customer is one with more than one call within this
+    // filtered set -- narrowing the filters (e.g. to a date range) narrows
+    // this count right along with it, same as every other tile here.
+    const returningCustomerCount = customerCallCounts.filter((c) => c._count > 1).length;
 
     return {
       totalCalls, // always equals carGlassesEnquiries + carModificationEnquiries + unknownCategoryEnquiries
@@ -115,12 +116,9 @@ export class ReportsService {
       followUpsOverdue,
       avgCallDurationSeconds:
         durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
-      // Total stated budget across these calls, spread across the distinct
-      // customers behind them -- an average expected spend per customer
-      // rather than a lump sum that gets bigger just because more calls came in.
-      budgetPotentialPerCustomer: customerCount > 0 ? Math.round(totalBudget / customerCount) : 0,
       interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
       totalCustomers: customerCount,
+      returningCustomers: returningCustomerCount,
     };
   }
 
