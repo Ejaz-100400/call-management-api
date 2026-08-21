@@ -70,11 +70,15 @@ export class CallsService {
   }
 
   /**
-   * Marks a failed call as `resolved` when the same customer has since had
-   * any completed call, inbound or outbound -- a customer who simply
-   * redialed and got through counts the same as a staff callback, since
-   * either way we did end up reaching them. Only computed for the page of
-   * failed calls actually being displayed, not the whole table.
+   * Marks a failed call as `resolved` when the same customer has ANY
+   * completed call on record, inbound or outbound, regardless of whether it
+   * happened before or after this particular failure -- a customer who's
+   * ever gotten through counts as reachable. Deliberately not order-
+   * sensitive: an earlier design only counted a LATER success, but that
+   * left a call marked "resolved" even when a customer called back after a
+   * prior success and failed again, which read as more reassuring than the
+   * data actually was. Only computed for the page of failed calls actually
+   * being displayed, not the whole table.
    */
   private async withResolvedFlag<T extends { id: string; customerId: string | null; status: string; callDate: Date }>(
     items: T[],
@@ -82,20 +86,19 @@ export class CallsService {
     const failedCustomerIds = [...new Set(items.filter((c) => c.status === 'failed' && c.customerId).map((c) => c.customerId!))];
     if (failedCustomerIds.length === 0) return items;
 
-    const laterCompleted = await this.prisma.call.findMany({
-      where: { customerId: { in: failedCustomerIds }, status: 'completed' },
-      select: { customerId: true, callDate: true },
-    });
-    const latestCompletedByCustomer = new Map<string, Date>();
-    for (const c of laterCompleted) {
-      const cur = latestCompletedByCustomer.get(c.customerId!);
-      if (!cur || c.callDate > cur) latestCompletedByCustomer.set(c.customerId!, c.callDate);
-    }
+    const completedCustomerIds = new Set(
+      (
+        await this.prisma.call.findMany({
+          where: { customerId: { in: failedCustomerIds }, status: 'completed' },
+          select: { customerId: true },
+          distinct: ['customerId'],
+        })
+      ).map((c) => c.customerId!),
+    );
 
     return items.map((c) => {
       if (c.status !== 'failed' || !c.customerId) return c;
-      const latest = latestCompletedByCustomer.get(c.customerId);
-      return { ...c, resolved: !!latest && latest > c.callDate };
+      return { ...c, resolved: completedCustomerIds.has(c.customerId) };
     });
   }
 
