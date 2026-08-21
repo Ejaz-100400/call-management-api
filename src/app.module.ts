@@ -3,6 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth/auth.module';
 import { BusinessNumbersModule } from './business-numbers/business-numbers.module';
 import { CallsModule } from './calls/calls.module';
+import { CoverageModule } from './coverage/coverage.module';
 import { CustomersModule } from './customers/customers.module';
 import { EmployeesModule } from './employees/employees.module';
 import { ExportModule } from './export/export.module';
@@ -31,6 +32,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ExportModule,
     ImportModule,
     BusinessNumbersModule,
+    CoverageModule,
     TeamModule,
     WebhooksModule,
   ],

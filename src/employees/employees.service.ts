@@ -53,36 +53,35 @@ export class EmployeesService {
    * number Exotel's Connect applet actually dialed (DialWhomNumber) --
    * always just a starting default, never final: the assignment stays
    * editable from the call/follow-up itself for the cases this can't get
-   * right (staff swapping who covers a shared number, etc).
+   * right.
    *
-   * More than one active employee can share the same phone (e.g. two people
-   * covering the same line at different times of day) -- when that happens,
-   * this picks between them using the existing `role` field rather than
-   * creation order (which has no relation to who actually works which
-   * shift -- confirmed against real data where the backup employee's record
-   * was created first). Whoever's role reads as a backup/relief role is
-   * treated as the after-6pm IST employee; everyone else is the daytime
-   * default. If no candidate's role signals "backup", this is genuinely
-   * ambiguous and the call is left unassigned rather than guessing.
+   * Reads the NumberCoverage table (see schema.prisma / the Team Coverage
+   * page) rather than guessing from Employee.phone/role -- a shared number
+   * can have several coverage rows across different hour windows (and
+   * possibly different employees than whoever's own personal phone that
+   * number happens to be), so this is the single source of truth for "who's
+   * on this number right now." isBackup rows are informational only and are
+   * never auto-assigned. If the matching hour falls in a gap between
+   * windows, or more than one non-backup row matches, this returns null
+   * rather than guessing.
    */
   async resolveForCall(dialedNumber: string, callDate: Date): Promise<string | null> {
     const target = normalizePhone(dialedNumber);
     if (!target) return null;
 
-    const active = await this.prisma.employee.findMany({
-      where: { active: true, phone: { not: null } },
-      select: { id: true, phone: true, role: true },
+    const rows = await this.prisma.numberCoverage.findMany({
+      where: { isBackup: false },
+      include: { employee: { select: { id: true, active: true } } },
     });
-    const candidates = active.filter((e) => normalizePhone(e.phone!) === target);
+    const candidates = rows.filter((r) => normalizePhone(r.phoneNumber) === target && r.employee.active);
     if (candidates.length === 0) return null;
-    if (candidates.length === 1) return candidates[0].id;
 
-    const isBackupRole = (role: string | null) => /backup|relief|night|evening/i.test(role ?? '');
-    const backup = candidates.find((e) => isBackupRole(e.role));
-    const primary = candidates.find((e) => !isBackupRole(e.role));
-    if (!backup || !primary) return null; // no clear day/night split among candidates -- don't guess
-
-    const isEvening = istHour(callDate) >= 18;
-    return isEvening ? backup.id : primary.id;
+    const hour = istHour(callDate);
+    const inWindow = (start: number | null, end: number | null) => {
+      if (start === null || end === null) return true; // no restriction -- always on
+      return start <= end ? hour >= start && hour < end : hour >= start || hour < end; // wraps past midnight
+    };
+    const matches = candidates.filter((c) => inWindow(c.startHour, c.endHour));
+    return matches.length === 1 ? matches[0].employeeId : null;
   }
 }

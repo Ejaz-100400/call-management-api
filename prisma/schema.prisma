@@ -28,18 +28,45 @@ model User {
 }
 
 model Employee {
-  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String
-  email     String?    @unique
+  email     String?           @unique
   phone     String?
   role      String?
-  active    Boolean    @default(true)
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+  active    Boolean           @default(true)
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime          @default(now()) @map("updated_at") @db.Timestamptz(6)
   calls     Call[]
   followUps FollowUp[]
+  coverage  NumberCoverage[]
 
   @@map("employees")
+  @@schema("public")
+}
+
+// Who covers an employee-facing number, and when -- decoupled from
+// Employee.phone because a shared number (e.g. one Car Modifications line)
+// can be handled by different people at different times of day, and one
+// person can cover more than one number. startHour/endHour are IST hours
+// (0-23); a row with both null means "always" (no shift restriction, used
+// for numbers with a single owner); endHour < startHour means the window
+// wraps past midnight (e.g. 18 -> 10 covers 6pm to 10am the next day).
+// isBackup rows are shown on the Team Coverage page but deliberately
+// excluded from automatic call assignment (resolveForCall in
+// employees.service.ts) -- backup is for staff to call on manually, not a
+// silent default.
+model NumberCoverage {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phoneNumber String   @map("phone_number")
+  employeeId  String   @map("employee_id") @db.Uuid
+  startHour   Int?     @map("start_hour")
+  endHour     Int?     @map("end_hour")
+  isBackup    Boolean  @default(false) @map("is_backup")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([phoneNumber], map: "idx_number_coverage_phone")
+  @@map("number_coverage")
   @@schema("public")
 }
 
