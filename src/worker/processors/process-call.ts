@@ -157,10 +157,17 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
 
     if (extraction.followUpRequired) {
       // Callers often say "call me back" without a specific date -- default
-      // rather than silently never creating the task.
+      // rather than silently never creating the task. Upsert, not create --
+      // a retry or manual reprocess re-runs this same block, and a plain
+      // create() here previously produced a second FollowUp row for the
+      // same call every time that happened. On an existing row, only the
+      // due date is refreshed; status/assignedTo/notes (anything staff may
+      // have already set) are left untouched.
       const dueDate = extraction.followUpDate ? new Date(extraction.followUpDate) : defaultFollowUpDueDate();
-      await prisma.followUp.create({
-        data: { callId, dueDate, assignedTo: call.employeeId },
+      await prisma.followUp.upsert({
+        where: { callId },
+        create: { callId, dueDate, assignedTo: call.employeeId },
+        update: { dueDate },
       });
     }
 

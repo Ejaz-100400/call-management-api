@@ -226,7 +226,11 @@ model CallProduct {
 
 model FollowUp {
   id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  callId      String         @map("call_id") @db.Uuid
+  // Unique: a call gets at most one follow-up task. Without this,
+  // process-call.ts's unconditional create() on every (re)processing run
+  // silently produced a second row whenever a call was reprocessed --
+  // upsert against this constraint now makes that structurally impossible.
+  callId      String         @unique @map("call_id") @db.Uuid
   dueDate     DateTime       @map("due_date") @db.Date
   status      FollowUpStatus @default(pending)
   assignedTo  String?        @map("assigned_to") @db.Uuid
