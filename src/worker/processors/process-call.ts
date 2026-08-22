@@ -3,7 +3,7 @@ import type { CallProcessingJob } from '../../queue/queue.service';
 import { linkDiscussedProducts } from '../../common/product-matching.util';
 import { defaultFollowUpDueDate, withFollowUpConsistency } from '../../follow-ups/follow-up.util';
 import { extractCallInfo } from '../providers/ai.provider';
-import { fetchExotelCallDetails } from '../providers/exotel.provider';
+import { describeNoConnectReason, describeStillNoRecordingReason, fetchExotelCallDetails, isTerminalNoConnectStatus } from '../providers/exotel.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
 import { transcribeAudio } from '../providers/stt.provider';
 
@@ -33,7 +33,23 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     if (!recordingUrl && callSid) {
       const details = await fetchExotelCallDetails(callSid);
       if (!details.recordingUrl) {
-        throw new Error(`Exotel call ${callSid} has no recording URL yet (status: ${details.status})`);
+        if (isTerminalNoConnectStatus(details.status)) {
+          // This call will never get a recording -- no point burning ~5
+          // minutes of BullMQ retries to find that out. Settle it now with
+          // a reason staff can actually act on, matching what Exotel's own
+          // dashboard shows for the same call (see MissedCalls/CallList).
+          await prisma.call.update({
+            where: { id: callId },
+            data: {
+              status: 'failed',
+              failureReason: describeNoConnectReason(details.status),
+              durationSeconds: details.durationSeconds,
+              ...(details.startTime && { callDate: details.startTime }),
+            },
+          });
+          return;
+        }
+        throw new Error(describeStillNoRecordingReason(details.status));
       }
       recordingUrl = details.recordingUrl;
       await prisma.call.update({
