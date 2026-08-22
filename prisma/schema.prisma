@@ -14,6 +14,11 @@ model User {
   name              String
   email             String           @unique
   role              UserRole         @default(viewer)
+  // Separate from `role` on purpose -- the Employee Performance page is
+  // meant for a single specific person (the business owner), not every
+  // admin. Deliberately not folded into the role enum, since granting
+  // "admin" for day-to-day management shouldn't also grant this.
+  isOwner           Boolean          @default(false) @map("is_owner")
   active            Boolean          @default(true)
   lastLoginAt       DateTime?        @map("last_login_at") @db.Timestamptz(6)
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
