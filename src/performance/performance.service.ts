@@ -28,7 +28,14 @@ export class PerformanceService {
     const { from, to, label } = monthRangeIST(month);
 
     const [employees, coverage] = await Promise.all([
-      this.prisma.employee.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+      // Backup staff only pick up occasional overflow -- their numbers
+      // aren't representative of day-to-day performance the way a
+      // regularly-scheduled employee's are, so they're excluded from this
+      // report entirely rather than shown with a misleading score.
+      this.prisma.employee.findMany({
+        where: { active: true, NOT: { role: { contains: 'backup', mode: 'insensitive' } } },
+        orderBy: { name: 'asc' },
+      }),
       this.prisma.numberCoverage.findMany(),
     ]);
 
@@ -120,8 +127,13 @@ export class PerformanceService {
     const followUpRate =
       followUpsHadTheirChance.length > 0 ? followUpCompleted / followUpsHadTheirChance.length : null;
 
+    // Scored on actual conversations, not just calls that happened to route
+    // to this employee -- a run of no-answers/failed connections has zero
+    // signal about how someone communicates, and defaulting every rate to a
+    // neutral 0.5 in that case produced a misleading flat 5/10 for someone
+    // who hadn't spoken to a single customer all month.
     let score: number | null = null;
-    if (totalCalls > 0) {
+    if (completed.length > 0) {
       const sentimentScore = (interestedRate ?? 0.5) * 4;
       const followUpScore = (followUpRate ?? 0.5) * 3;
       const thoroughnessScore = (dataCaptureRate ?? 0.5) * 3;
@@ -131,35 +143,52 @@ export class PerformanceService {
     const pros: string[] = [];
     const cons: string[] = [];
 
-    if (interestedRate !== null) {
-      if (interestedRate >= 0.5) pros.push(`Strong customer rapport — ${pct(interestedRate)} of calls end "interested".`);
-      if (notInterestedRate! >= 0.3) cons.push(`Higher-than-typical "not interested" outcomes — ${pct(notInterestedRate!)} of calls.`);
-    }
-    if (followUpRate !== null) {
-      if (followUpRate >= 0.7) pros.push(`Follows through on commitments — ${pct(followUpRate)} of assigned follow-ups completed.`);
-      if (followUpRate < 0.4) cons.push(`Follow-ups often left pending — only ${pct(followUpRate)} completed.`);
-    } else if (totalCalls > 0) {
-      cons.push(
-        followUpTotal === 0
-          ? 'No follow-ups assigned this period — hard to judge how commitments are tracked.'
-          : "All of this period's follow-ups are still within their due date — too early to judge follow-through.",
-      );
-    }
-    if (dataCaptureRate !== null) {
-      if (dataCaptureRate >= 0.7)
-        pros.push(`Thorough call notes — customer name, vehicle, and products captured on ${pct(dataCaptureRate)} of calls.`);
-      if (dataCaptureRate < 0.4)
-        cons.push(`Customer/vehicle details frequently left blank — only ${pct(dataCaptureRate)} of calls fully recorded.`);
-    }
-    if (completionRate !== null) {
-      if (completionRate >= 0.85) pros.push(`High call completion rate — ${pct(completionRate)} of calls connect successfully.`);
-      if (completionRate < 0.6)
-        cons.push(`Lower call completion rate (${pct(completionRate)}) — may reflect availability/coverage rather than communication skill.`);
-    }
-    if (followUpOverdue > 0) cons.push(`${followUpOverdue} follow-up(s) currently overdue.`);
+    if (completed.length === 0) {
+      // No completed calls means no conversation to judge, regardless of
+      // how many calls technically routed to this person -- keep the two
+      // cases distinct rather than lumping "never rang" in with "rang
+      // several times but none connected," since the latter is worth the
+      // owner's attention even though it isn't a communication issue.
+      if (totalCalls === 0) {
+        pros.push('No calls handled this period yet.');
+        cons.push('No data to assess yet.');
+      } else {
+        pros.push('Not enough data yet — no completed calls this period.');
+        cons.push(
+          `${totalCalls} call(s) routed to them this period, but none connected — nothing to judge communication-wise. Worth checking availability/coverage rather than treating this as a performance issue.`,
+        );
+      }
+    } else {
+      if (interestedRate !== null) {
+        if (interestedRate >= 0.5) pros.push(`Strong customer rapport — ${pct(interestedRate)} of calls end "interested".`);
+        if (notInterestedRate! >= 0.3) cons.push(`Higher-than-typical "not interested" outcomes — ${pct(notInterestedRate!)} of calls.`);
+      }
+      if (followUpRate !== null) {
+        if (followUpRate >= 0.7) pros.push(`Follows through on commitments — ${pct(followUpRate)} of assigned follow-ups completed.`);
+        if (followUpRate < 0.4) cons.push(`Follow-ups often left pending — only ${pct(followUpRate)} completed.`);
+      } else {
+        cons.push(
+          followUpTotal === 0
+            ? 'No follow-ups assigned this period — hard to judge how commitments are tracked.'
+            : "All of this period's follow-ups are still within their due date — too early to judge follow-through.",
+        );
+      }
+      if (dataCaptureRate !== null) {
+        if (dataCaptureRate >= 0.7)
+          pros.push(`Thorough call notes — customer name, vehicle, and products captured on ${pct(dataCaptureRate)} of calls.`);
+        if (dataCaptureRate < 0.4)
+          cons.push(`Customer/vehicle details frequently left blank — only ${pct(dataCaptureRate)} of calls fully recorded.`);
+      }
+      if (completionRate !== null) {
+        if (completionRate >= 0.85) pros.push(`High call completion rate — ${pct(completionRate)} of calls connect successfully.`);
+        if (completionRate < 0.6)
+          cons.push(`Lower call completion rate (${pct(completionRate)}) — may reflect availability/coverage rather than communication skill.`);
+      }
+      if (followUpOverdue > 0) cons.push(`${followUpOverdue} follow-up(s) currently overdue.`);
 
-    if (pros.length === 0) pros.push(totalCalls === 0 ? 'No calls handled this period yet.' : 'Nothing stands out as a strength yet — check back after more calls this month.');
-    if (cons.length === 0) cons.push(totalCalls === 0 ? 'No data to assess yet.' : 'No notable concerns this period.');
+      if (pros.length === 0) pros.push('Nothing stands out as a strength yet — check back after more calls this month.');
+      if (cons.length === 0) cons.push('No notable concerns this period.');
+    }
 
     return {
       score,
