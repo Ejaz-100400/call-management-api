@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { parseIstTimestamp } from '../common/timezone.util';
+import { formatIstTimestamp, parseIstTimestamp } from '../common/timezone.util';
 
 const logger = new Logger('OutboundCallSync');
 
@@ -35,11 +35,10 @@ async function fetchCallsPage(dateFrom: Date, dateTo: Date, afterCursor?: string
   }
   const auth = Buffer.from(`${apiKey}:${apiToken}`).toString('base64');
 
-  const fmt = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
   const params = new URLSearchParams({
     SortBy: 'DateCreated:asc',
     PageSize: '50',
-    DateCreated: `gte:${fmt(dateFrom)};lte:${fmt(dateTo)}`,
+    DateCreated: `gte:${formatIstTimestamp(dateFrom)};lte:${formatIstTimestamp(dateTo)}`,
   });
   if (afterCursor) params.set('After', afterCursor);
 

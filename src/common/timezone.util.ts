@@ -38,3 +38,15 @@ export function parseIstTimestamp(raw: string): Date | null {
 export function istHour(date: Date): number {
   return new Date(date.getTime() + IST_OFFSET_MS).getUTCHours();
 }
+
+/**
+ * The inverse of parseIstTimestamp: renders a real instant as the IST
+ * wall-clock string Exotel's own APIs expect (e.g. as a DateCreated filter
+ * value), "YYYY-MM-DD HH:MM:SS". Formatting with plain `toISOString()`
+ * instead -- which renders the UTC wall-clock -- sends a string that's off
+ * by 5.5 hours, so a query window built around "now" silently only starts
+ * matching once the UTC clock catches up to what was actually meant in IST.
+ */
+export function formatIstTimestamp(date: Date): string {
+  return new Date(date.getTime() + IST_OFFSET_MS).toISOString().slice(0, 19).replace('T', ' ');
+}

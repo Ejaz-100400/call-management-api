@@ -76,19 +76,22 @@ export function describeNoConnectReason(status: string): string {
   return TERMINAL_NO_CONNECT_REASONS[status] ?? 'Call did not connect';
 }
 
-// The non-terminal statuses that still end up with no recording after every
-// retry is exhausted -- in practice almost all of these are "completed"
-// (Exotel says the call connected fine, but a recording never became
-// available for it, e.g. a very short or glitchy call) or "ringing" (call
-// was still ringing when last checked, so nobody answered in time).
-const EXHAUSTED_RETRY_REASONS: Record<string, string> = {
-  completed: 'Call connected — recording unavailable',
-  ringing: 'No answer — call kept ringing',
-};
-
-/** Human-readable reason once retries are exhausted for a call that isn't a known terminal no-connect status. */
-export function describeStillNoRecordingReason(status: string): string {
-  return EXHAUSTED_RETRY_REASONS[status] ?? `Call ended without a recording (status: ${status})`;
+/**
+ * Human-readable reason once retries are exhausted for a call that isn't a
+ * known terminal no-connect status. Exotel's "completed" here describes the
+ * overall call FLOW finishing -- e.g. the IVR ran out and hung up, or the
+ * customer gave up waiting -- not that a human ever picked up on our end;
+ * treating it as "the call connected" is wrong more often than right.
+ * durationSeconds is the actual signal: a real conversation leaves some
+ * measurable talk time, so 0 (or near it) means nobody actually answered
+ * regardless of what the high-level status says.
+ */
+export function describeStillNoRecordingReason(status: string, durationSeconds: number): string {
+  if (durationSeconds < 3) {
+    return status === 'ringing' ? 'No answer — call kept ringing' : 'No answer — nobody picked up';
+  }
+  if (status === 'completed') return 'Call connected — recording unavailable';
+  return `Call ended without a recording (status: ${status})`;
 }
 
 /** Basic-auth header Exotel requires to actually download a recording file (its URLs aren't publicly fetchable). */

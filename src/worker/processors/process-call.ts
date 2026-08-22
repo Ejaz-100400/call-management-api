@@ -49,7 +49,7 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
           });
           return;
         }
-        throw new Error(describeStillNoRecordingReason(details.status));
+        throw new Error(describeStillNoRecordingReason(details.status, details.durationSeconds));
       }
       recordingUrl = details.recordingUrl;
       await prisma.call.update({
