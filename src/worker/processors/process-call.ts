@@ -33,6 +33,25 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     if (!recordingUrl && callSid) {
       const details = await fetchExotelCallDetails(callSid);
       if (!details.recordingUrl) {
+        if (details.answeredBy === 'human' && details.durationSeconds >= 3) {
+          // Exotel's own AnsweredBy is the most reliable signal it gives for
+          // "did a person actually pick up" -- a real conversation happened
+          // here, the recording is just missing (an Exotel-side gap, not a
+          // missed call). Marking this "failed" would misrepresent a
+          // genuinely handled customer as unreached. No transcript/AI
+          // extraction is possible without audio, same as a manually
+          // imported historical call.
+          await prisma.call.update({
+            where: { id: callId },
+            data: {
+              status: 'completed',
+              failureReason: null,
+              durationSeconds: details.durationSeconds,
+              ...(details.startTime && { callDate: details.startTime }),
+            },
+          });
+          return;
+        }
         if (isTerminalNoConnectStatus(details.status)) {
           // This call will never get a recording -- no point burning ~5
           // minutes of BullMQ retries to find that out. Settle it now with
@@ -49,6 +68,15 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
           });
           return;
         }
+        // Persist the real duration/time even on the path that's about to
+        // throw -- otherwise a "Call connected" reason computed from
+        // Exotel's actual (non-zero) duration ends up sitting next to a
+        // stale "0:00" in the UI once this settles to failed, which reads
+        // as a flat contradiction.
+        await prisma.call.update({
+          where: { id: callId },
+          data: { durationSeconds: details.durationSeconds, ...(details.startTime && { callDate: details.startTime }) },
+        });
         throw new Error(describeStillNoRecordingReason(details.status, details.durationSeconds));
       }
       recordingUrl = details.recordingUrl;

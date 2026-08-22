@@ -16,6 +16,8 @@ export interface ExotelCallDetails {
   durationSeconds: number;
   status: string;
   startTime: Date | null;
+  /** "human" when a person actually answered -- the most reliable signal Exotel gives for "did this call genuinely connect." */
+  answeredBy: string | null;
 }
 
 export async function fetchExotelCallDetails(callSid: string): Promise<ExotelCallDetails> {
@@ -45,6 +47,7 @@ export async function fetchExotelCallDetails(callSid: string): Promise<ExotelCal
     // sends -- see parseIstTimestamp's comment for why this can't be a bare
     // `new Date(...)`.
     startTime: call.StartTime ? parseIstTimestamp(call.StartTime as string) : null,
+    answeredBy: (call.AnsweredBy as string) || null,
   };
 }
 
