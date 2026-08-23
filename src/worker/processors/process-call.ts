@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import type { CallProcessingJob } from '../../queue/queue.service';
 import { linkDiscussedProducts } from '../../common/product-matching.util';
 import { defaultFollowUpDueDate, withFollowUpConsistency } from '../../follow-ups/follow-up.util';
-import { extractCallInfo } from '../providers/ai.provider';
+import { extractCallInfo, isVoicemailAnnouncement } from '../providers/ai.provider';
 import { describeNoConnectReason, describeStillNoRecordingReason, fetchExotelCallDetails, isTerminalNoConnectStatus } from '../providers/exotel.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
 import { transcribeAudio } from '../providers/stt.provider';
@@ -128,6 +128,21 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
         diarized: transcription.diarized as object,
       },
     });
+
+    // Jaheer's voicemail intercept still produces a recording (the carrier's
+    // own "forwarded to voicemail" announcement), unlike a genuine call --
+    // catches the case the no-recording check above can't, since here
+    // Exotel did hand back a recording. A diarization/speaker-count based
+    // check was tried first and wrongly flagged real (if brief, one-sided,
+    // or code-switched) conversations as voicemail, so this asks Claude to
+    // judge the actual transcript content instead.
+    if ((await isVoicemailInterceptRisk(call.employeeId)) && (await isVoicemailAnnouncement(transcription.rawText))) {
+      await prisma.call.update({
+        where: { id: callId },
+        data: { status: 'failed', failureReason: "No answer — Jaheer's voicemail picked up instead", recordingStorageKey: storageKey },
+      });
+      return;
+    }
 
     const extraction = await extractCallInfo(transcription.rawText, {
       businessCategory: call.businessCategory,
