@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import type { CallProcessingJob } from '../../queue/queue.service';
 import { linkDiscussedProducts } from '../../common/product-matching.util';
 import { defaultFollowUpDueDate, withFollowUpConsistency } from '../../follow-ups/follow-up.util';
-import { extractCallInfo, isVoicemailAnnouncement } from '../providers/ai.provider';
+import { extractCallInfo, lacksGenuineConversation } from '../providers/ai.provider';
 import { describeNoConnectReason, describeStillNoRecordingReason, fetchExotelCallDetails, isTerminalNoConnectStatus } from '../providers/exotel.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
 import { transcribeAudio } from '../providers/stt.provider';
@@ -33,25 +33,10 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     if (!recordingUrl && callSid) {
       const details = await fetchExotelCallDetails(callSid);
       if (!details.recordingUrl) {
-        if (details.answeredBy === 'human' && details.durationSeconds >= 3 && !(await isVoicemailInterceptRisk(call.employeeId))) {
-          // Exotel's own AnsweredBy is the most reliable signal it gives for
-          // "did a person actually pick up" -- a real conversation happened
-          // here, the recording is just missing (an Exotel-side gap, not a
-          // missed call). Marking this "failed" would misrepresent a
-          // genuinely handled customer as unreached. No transcript/AI
-          // extraction is possible without audio, same as a manually
-          // imported historical call.
-          await prisma.call.update({
-            where: { id: callId },
-            data: {
-              status: 'completed',
-              failureReason: null,
-              durationSeconds: details.durationSeconds,
-              ...(details.startTime && { callDate: details.startTime }),
-            },
-          });
-          return;
-        }
+        // No recording means no way to verify a real conversation happened,
+        // regardless of what Exotel's own AnsweredBy/status say -- treated
+        // as a miss rather than trusting that signal, since staff have no
+        // transcript or audio to check either way.
         if (isTerminalNoConnectStatus(details.status)) {
           // This call will never get a recording -- no point burning ~5
           // minutes of BullMQ retries to find that out. Settle it now with
@@ -129,17 +114,18 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
       },
     });
 
-    // Jaheer's voicemail intercept still produces a recording (the carrier's
-    // own "forwarded to voicemail" announcement), unlike a genuine call --
-    // catches the case the no-recording check above can't, since here
-    // Exotel did hand back a recording. A diarization/speaker-count based
-    // check was tried first and wrongly flagged real (if brief, one-sided,
-    // or code-switched) conversations as voicemail, so this asks Claude to
-    // judge the actual transcript content instead.
-    if ((await isVoicemailInterceptRisk(call.employeeId)) && (await isVoicemailAnnouncement(transcription.rawText))) {
+    // Jaheer's line can hand back a recording (the carrier's own "forwarded
+    // to voicemail" announcement, or a call that barely connected before
+    // hanging up) with nothing genuinely useful in it -- catches the case
+    // the no-recording check above can't, since here Exotel did hand back a
+    // recording. A diarization/speaker-count based check was tried first
+    // and wrongly flagged real (if brief, one-sided, or code-switched)
+    // conversations as empty, so this asks Claude to judge the actual
+    // transcript content instead.
+    if ((await isVoicemailInterceptRisk(call.employeeId)) && (await lacksGenuineConversation(transcription.rawText))) {
       await prisma.call.update({
         where: { id: callId },
-        data: { status: 'failed', failureReason: "No answer — Jaheer's voicemail picked up instead", recordingStorageKey: storageKey },
+        data: { status: 'failed', failureReason: "No answer — Jaheer's line didn't capture a real conversation", recordingStorageKey: storageKey },
       });
       return;
     }

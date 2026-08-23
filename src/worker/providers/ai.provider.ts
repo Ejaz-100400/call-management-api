@@ -74,36 +74,39 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
   },
 };
 
-const VOICEMAIL_CHECK_TOOL: Anthropic.Tool = {
+const CONVERSATION_CHECK_TOOL: Anthropic.Tool = {
   name: 'classify_transcript',
-  description: 'Classifies whether a call transcript is a real two-way conversation or just an automated carrier/voicemail announcement with no genuine dialogue.',
+  description: 'Classifies whether a call transcript captures a genuine, substantive customer interaction, or effectively nothing usable.',
   input_schema: {
     type: 'object',
     properties: {
-      isVoicemailAnnouncement: {
+      lacksGenuineConversation: {
         type: 'boolean',
         description:
-          'True only if the transcript is purely an automated carrier/voicemail greeting or announcement ' +
-          '(e.g. a garbled rendering of "your call has been forwarded to voicemail, the person you are ' +
-          'trying to reach is not available", a beep, silence, or meaningless noise) with no real exchange ' +
-          'between a customer and an agent. False if there is any genuine conversation, even a short, ' +
-          'one-sided, or confusing one -- e.g. someone actually discussing a car, a part, a price, or a ' +
-          'location is a real conversation, not a voicemail.',
+          'True if the transcript does NOT capture a real, substantive exchange -- either it\'s an ' +
+          'automated carrier/voicemail greeting or announcement (e.g. a garbled rendering of "your call ' +
+          'has been forwarded to voicemail, the person you are trying to reach is not available"), OR the ' +
+          'call barely connected and essentially nothing was said (a stray word or two, a bare greeting ' +
+          'with no follow-through, silence, or meaningless noise) -- in either case there\'s no actual ' +
+          'customer name, vehicle, requirement, or request captured. False whenever the customer and agent ' +
+          'had any real exchange about the customer\'s needs, even if brief or one-sided -- e.g. someone ' +
+          'actually discussing a car, a part, a price, or a location is a real conversation.',
       },
     },
-    required: ['isVoicemailAnnouncement'],
+    required: ['lacksGenuineConversation'],
   },
 };
 
 /**
- * Some calls never reach a real person -- the line forwards to a carrier
- * voicemail box, and only its automated announcement gets recorded. Since
- * transcription here is forced into Tamil (see stt.provider.ts), that
- * English announcement comes back garbled rather than as clean matchable
- * text, so this asks Claude to judge it in context instead of pattern
- * matching against unpredictable ASR noise.
+ * Some calls never produce a usable interaction -- the line forwards to a
+ * carrier voicemail box (its automated announcement gets recorded instead
+ * of a person), or the call barely connects and nothing of substance gets
+ * said. Since transcription here is forced into Tamil (see stt.provider.ts),
+ * an English voicemail announcement comes back garbled rather than as clean
+ * matchable text, so this asks Claude to judge the transcript in context
+ * instead of pattern matching against unpredictable ASR noise.
  */
-export async function isVoicemailAnnouncement(transcript: string): Promise<boolean> {
+export async function lacksGenuineConversation(transcript: string): Promise<boolean> {
   if (!transcript.trim()) return true;
 
   const message = await anthropic.messages.create({
@@ -113,7 +116,7 @@ export async function isVoicemailAnnouncement(transcript: string): Promise<boole
       'You classify short phone call transcripts (often Tamil/English mixed, sometimes garbled by ' +
       'speech-to-text forced into the wrong language) for an automotive business.',
     messages: [{ role: 'user', content: `Transcript:\n${transcript}` }],
-    tools: [VOICEMAIL_CHECK_TOOL],
+    tools: [CONVERSATION_CHECK_TOOL],
     tool_choice: { type: 'tool', name: 'classify_transcript' },
   });
 
@@ -123,7 +126,7 @@ export async function isVoicemailAnnouncement(transcript: string): Promise<boole
   // Default to "real conversation" on an unclear/failed classification --
   // wrongly hiding a genuine customer call as missed is worse than the
   // reverse.
-  return (toolUse?.input as { isVoicemailAnnouncement?: boolean } | undefined)?.isVoicemailAnnouncement ?? false;
+  return (toolUse?.input as { lacksGenuineConversation?: boolean } | undefined)?.lacksGenuineConversation ?? false;
 }
 
 export async function extractCallInfo(
