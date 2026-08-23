@@ -19,6 +19,7 @@ export class ReportsService {
     return {
       ...(filters.category?.length && { businessCategory: { in: filters.category } }),
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
+      ...(filters.status?.length && { status: { in: filters.status } }),
       ...(filters.employeeId?.length && { employeeId: { in: filters.employeeId } }),
       ...((filters.dateFrom || filters.dateTo) && {
         callDate: {
@@ -47,6 +48,14 @@ export class ReportsService {
     if (filters.employeeId?.length) {
       conditions.push(
         Prisma.sql`${Prisma.raw(callAlias)}.employee_id IN (${Prisma.join(filters.employeeId.map((id) => Prisma.sql`${id}::uuid`))})`,
+      );
+    }
+    if (filters.branch?.length) {
+      conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.branch IN (${Prisma.join(filters.branch.map((b) => Prisma.sql`${b}::branch`))})`);
+    }
+    if (filters.status?.length) {
+      conditions.push(
+        Prisma.sql`${Prisma.raw(callAlias)}.status IN (${Prisma.join(filters.status.map((s) => Prisma.sql`${s}::call_status`))})`,
       );
     }
     if (filters.dateFrom) conditions.push(Prisma.sql`${Prisma.raw(callAlias)}.call_date >= ${startOfDayIST(filters.dateFrom)}`);

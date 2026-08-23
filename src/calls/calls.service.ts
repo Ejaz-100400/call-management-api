@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { linkDiscussedProducts } from '../common/product-matching.util';
-import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
+import { endOfDayIST, parseIstTimestamp, startOfDayIST } from '../common/timezone.util';
 import { defaultFollowUpDueDate, withFollowUpConsistency } from '../follow-ups/follow-up.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
@@ -39,8 +39,16 @@ export class CallsService {
       ...(query.branch?.length && { branch: { in: query.branch } }),
       ...((query.dateFrom || query.dateTo) && {
         callDate: {
-          ...(query.dateFrom && { gte: startOfDayIST(query.dateFrom) }),
-          ...(query.dateTo && { lt: endOfDayIST(query.dateTo) }),
+          ...(query.dateFrom && {
+            gte: query.timeFrom
+              ? (parseIstTimestamp(`${query.dateFrom} ${query.timeFrom}:00`) ?? startOfDayIST(query.dateFrom))
+              : startOfDayIST(query.dateFrom),
+          }),
+          ...(query.dateTo && {
+            [query.timeTo ? 'lte' : 'lt']: query.timeTo
+              ? (parseIstTimestamp(`${query.dateTo} ${query.timeTo}:00`) ?? endOfDayIST(query.dateTo))
+              : endOfDayIST(query.dateTo),
+          }),
         },
       }),
       ...(query.phone && {

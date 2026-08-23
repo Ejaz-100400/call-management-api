@@ -23,6 +23,12 @@ export class QueryReportsDto {
   @IsOptional()
   @ToArray()
   @IsArray()
+  @IsIn(['pending', 'processing', 'completed', 'failed'], { each: true })
+  status?: ('pending' | 'processing' | 'completed' | 'failed')[];
+
+  @IsOptional()
+  @ToArray()
+  @IsArray()
   @IsString({ each: true })
   carMake?: string[];
 

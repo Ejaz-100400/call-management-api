@@ -30,6 +30,12 @@ export class QueryCustomersDto {
   category?: ('car_glasses' | 'car_modifications' | 'unknown')[];
 
   @IsOptional()
+  @ToArray()
+  @IsArray()
+  @IsIn(['pending', 'processing', 'completed', 'failed'], { each: true })
+  status?: ('pending' | 'processing' | 'completed' | 'failed')[]; // matches any of the customer's calls
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

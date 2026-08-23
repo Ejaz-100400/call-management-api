@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Min } from 'class-validator';
 import { ToArray } from '../../common/array-query.util';
 
 export class QueryCallsDto {
@@ -63,6 +63,14 @@ export class QueryCallsDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'timeFrom must be in HH:mm 24-hour format' })
+  timeFrom?: string;
+
+  @IsOptional()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: 'timeTo must be in HH:mm 24-hour format' })
+  timeTo?: string;
 
   @IsOptional()
   @ToArray()
