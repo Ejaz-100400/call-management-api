@@ -1,13 +1,40 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import ExcelJS from 'exceljs';
-import puppeteer from 'puppeteer';
+import type { Browser } from 'puppeteer-core';
 import { CallsService } from '../calls/calls.service';
 import { QueryCallsDto } from '../calls/dto/query-calls.dto';
+
+/**
+ * Render's standard Node runtime doesn't have the system shared libraries
+ * (libnss3, libatk, etc.) headless Chromium needs to actually run -- only
+ * downloading the binary via `puppeteer`'s postinstall isn't enough, it
+ * fails to launch with a shared-library error. @sparticuz/chromium ships a
+ * build statically linked against everything it needs, purpose-built for
+ * exactly this kind of minimal container (it's the standard fix for
+ * Puppeteer on Render/Vercel/Lambda). Local dev keeps using the full
+ * `puppeteer` package instead, since @sparticuz/chromium's binary is
+ * Linux-only and won't run on a Windows/Mac dev machine.
+ */
+async function launchBrowser(): Promise<Browser> {
+  if (process.env.RENDER) {
+    const { default: chromium } = await import('@sparticuz/chromium');
+    const { default: puppeteerCore } = await import('puppeteer-core');
+    return puppeteerCore.launch({
+      executablePath: await chromium.executablePath(),
+      args: chromium.args,
+      headless: true,
+    });
+  }
+  const { default: puppeteer } = await import('puppeteer');
+  return puppeteer.launch({ headless: true, args: ['--no-sandbox'] }) as unknown as Promise<Browser>;
+}
 
 const EXPORT_ROW_CAP = 10000;
 
 @Injectable()
 export class ExportService {
+  private readonly logger = new Logger(ExportService.name);
+
   constructor(private callsService: CallsService) {}
 
   /**
@@ -73,10 +100,18 @@ export class ExportService {
     const rows = await this.getExportRows(query);
     const html = this.buildReportHtml(rows);
 
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+    let browser: Browser;
+    try {
+      browser = await launchBrowser();
+    } catch (err) {
+      this.logger.error(`Failed to launch headless browser for PDF export: ${(err as Error).message}`);
+      throw err;
+    }
     try {
       const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'networkidle0' });
+      // Fully self-contained inline HTML (no external resources) -- 'load'
+      // is sufficient and is what puppeteer-core's stricter types accept.
+      await page.setContent(html, { waitUntil: 'load' });
       const pdfBuffer = await page.pdf({ format: 'A4', landscape: true, printBackground: true });
       return Buffer.from(pdfBuffer);
     } finally {
