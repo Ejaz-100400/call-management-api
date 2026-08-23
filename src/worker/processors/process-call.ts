@@ -33,7 +33,7 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     if (!recordingUrl && callSid) {
       const details = await fetchExotelCallDetails(callSid);
       if (!details.recordingUrl) {
-        if (details.answeredBy === 'human' && details.durationSeconds >= 3) {
+        if (details.answeredBy === 'human' && details.durationSeconds >= 3 && !(await isVoicemailInterceptRisk(call.employeeId))) {
           // Exotel's own AnsweredBy is the most reliable signal it gives for
           // "did a person actually pick up" -- a real conversation happened
           // here, the recording is just missing (an Exotel-side gap, not a
@@ -212,6 +212,13 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     });
     throw err; // rethrow so BullMQ's retry/backoff applies
   }
+}
+
+// Jaheer's iPhone voicemail auto-answers look identical to a real pickup (AnsweredBy: human, real duration), so treat his no-recording calls as genuine misses.
+async function isVoicemailInterceptRisk(employeeId: string | null): Promise<boolean> {
+  if (!employeeId) return false;
+  const employee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { name: true } });
+  return employee?.name === 'Jaheer Hussain';
 }
 
 async function regenerateSummary(callId: string) {
