@@ -36,6 +36,11 @@ export class ReportsController {
     return this.reportsService.topCarModels(limit ? Number(limit) : undefined, filters);
   }
 
+  @Get('top-car-makes')
+  topCarMakes(@Query('limit') limit: string | undefined, @Query() filters: QueryReportsDto) {
+    return this.reportsService.topCarMakes(limit ? Number(limit) : undefined, filters);
+  }
+
   @Get('top-products')
   topProducts(@Query('limit') limit: string | undefined, @Query() filters: QueryReportsDto) {
     return this.reportsService.topProducts(limit ? Number(limit) : undefined, filters);

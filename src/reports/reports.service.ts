@@ -231,6 +231,24 @@ export class ReportsService {
     return rows.map((r) => ({ car_model: r.car_model, count: Number(r.count) }));
   }
 
+  async topCarMakes(limit = 10, filters: QueryReportsDto = {}) {
+    const conditions = [
+      Prisma.sql`ce.car_make IS NOT NULL AND ce.car_make <> ''`,
+      ...this.buildCallConditions(filters, 'c', 'ce'),
+    ];
+
+    const rows = await this.prisma.$queryRaw<Array<{ car_make: string; count: bigint }>>(Prisma.sql`
+      SELECT ce.car_make, COUNT(*)::bigint AS count
+      FROM call_extractions ce
+      JOIN calls c ON c.id = ce.call_id
+      WHERE ${Prisma.join(conditions, ' AND ')}
+      GROUP BY ce.car_make
+      ORDER BY count DESC
+      LIMIT ${limit};
+    `);
+    return rows.map((r) => ({ car_make: r.car_make, count: Number(r.count) }));
+  }
+
   async topProducts(limit = 10, filters: QueryReportsDto = {}) {
     const needsJoin = this.needsExtractionJoin(filters);
     const conditions = this.buildCallConditions(filters, 'c', needsJoin ? 'ce' : undefined);
