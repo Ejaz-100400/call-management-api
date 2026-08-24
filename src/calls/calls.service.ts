@@ -66,7 +66,13 @@ export class CallsService {
     const [items, total] = await Promise.all([
       this.prisma.call.findMany({
         where,
-        include: { customer: true, employee: true, extraction: true, importedBy: { select: { name: true, email: true } } },
+        include: {
+          customer: true,
+          employee: true,
+          extraction: true,
+          importedBy: { select: { name: true, email: true } },
+          products: { include: { product: true } },
+        },
         orderBy: { callDate: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
