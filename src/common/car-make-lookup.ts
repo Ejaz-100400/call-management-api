@@ -397,8 +397,17 @@ function fuzzyModelMatch(compactedText: string): [model: string, make: string] |
   return best ? [best.model, best.make] : undefined;
 }
 
-/** Returns the known make for a car model string (word-boundary match), or undefined if not recognized. */
-export function inferCarMakeFromModel(rawModel: string): string | undefined {
+/**
+ * Returns the known make for a car model string (word-boundary match), or
+ * undefined if not recognized. `fuzzy` (default true) allows the typo-
+ * tolerant Levenshtein pass -- built for clean, human-typed Excel cells
+ * where a typo is genuinely 1-2 characters off the real word. Pass `false`
+ * for speech-to-text output: a garbled ASR string can look superficially
+ * close to an unrelated model (e.g. "Rigo Sport" landing within edit-
+ * distance of "EcoSport") without actually being it, so call sites reading
+ * transcripts should stick to exact/substring matches only.
+ */
+export function inferCarMakeFromModel(rawModel: string, fuzzy = true): string | undefined {
   const normalized = rawModel.trim();
   if (!normalized) return undefined;
 
@@ -410,13 +419,18 @@ export function inferCarMakeFromModel(rawModel: string): string | undefined {
 
   // Catches compound codes typed with different spacing/punctuation than the
   // table above, e.g. "XUV 500" vs the map's "xuv500", or "S Presso" vs
-  // "spresso" -- compare with spaces/hyphens stripped from both sides.
+  // "spresso" -- compare with spaces/hyphens stripped from both sides. Only
+  // for keys of 5+ characters, same reasoning as fuzzyModelMatch below: a
+  // short code like "go" or "x1" is prone to appearing as a false substring
+  // inside unrelated text (e.g. "Rigo Sport" contains "go") -- short codes
+  // are still reachable via the exact word-boundary check above.
   const compacted = compact(normalized);
   for (const [model, make] of SORTED_MODEL_ENTRIES) {
-    if (compacted.includes(compact(model))) return make;
+    const key = compact(model);
+    if (key.length >= 5 && compacted.includes(key)) return make;
   }
 
-  return fuzzyModelMatch(compacted)?.[1];
+  return fuzzy ? fuzzyModelMatch(compacted)?.[1] : undefined;
 }
 
 /**
@@ -439,7 +453,8 @@ function canonicalizeModel(rawModel: string): string | undefined {
 
   const compacted = compact(normalized);
   for (const [model] of SORTED_MODEL_ENTRIES) {
-    if (compacted.includes(compact(model))) return MODEL_DISPLAY[model];
+    const key = compact(model);
+    if (key.length >= 5 && compacted.includes(key)) return MODEL_DISPLAY[model];
   }
 
   const fuzzy = fuzzyModelMatch(compacted);

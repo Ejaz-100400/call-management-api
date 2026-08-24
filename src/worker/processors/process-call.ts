@@ -3,6 +3,7 @@ import type { CallProcessingJob } from '../../queue/queue.service';
 import { linkDiscussedProducts } from '../../common/product-matching.util';
 import { defaultFollowUpDueDate, withFollowUpConsistency } from '../../follow-ups/follow-up.util';
 import { extractCallInfo, lacksGenuineConversation } from '../providers/ai.provider';
+import { inferCarMakeFromModel } from '../../common/car-make-lookup';
 import { describeNoConnectReason, describeStillNoRecordingReason, fetchExotelCallDetails, isTerminalNoConnectStatus } from '../providers/exotel.provider';
 import { fetchFromProviderUrl, fetchFromStorage, uploadRecording } from '../providers/storage.provider';
 import { transcribeAudio } from '../providers/stt.provider';
@@ -140,6 +141,18 @@ async function fullReprocess(callId: string, recordingUrl?: string, callSid?: st
     extraction.followUpRequired = withFollowUpConsistency(extraction.followUpRequired, extraction.sentiment);
 
     await fillFromKnownCustomer(call.customerId, extraction);
+
+    // The AI extraction deliberately omits carMake when the customer only
+    // said the model (it's instructed not to guess beyond what was said) --
+    // but a model like "Swift" or "Creta" only ever comes from one
+    // manufacturer, so this fills that in deterministically rather than
+    // relying on the model to volunteer world knowledge it was told not to.
+    if (!extraction.carMake && extraction.carModel) {
+      // fuzzy: false -- a garbled ASR transcript can land within edit
+      // distance of the wrong model (see car-make-lookup.ts), so only an
+      // exact or substring match is trusted here.
+      extraction.carMake = inferCarMakeFromModel(extraction.carModel, false) ?? null;
+    }
 
     await prisma.callExtraction.upsert({
       where: { callId },
