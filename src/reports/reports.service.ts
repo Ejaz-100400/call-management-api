@@ -215,7 +215,9 @@ export class ReportsService {
 
   async topCarModels(limit = 10, filters: QueryReportsDto = {}) {
     const conditions = [
-      Prisma.sql`ce.car_model IS NOT NULL AND ce.car_model <> ''`,
+      // "Unknown"/"<UNKNOWN>" is a placeholder the AI extraction writes when
+      // it couldn't determine the model, not a real answer worth charting.
+      Prisma.sql`ce.car_model IS NOT NULL AND ce.car_model <> '' AND lower(ce.car_model) NOT IN ('unknown', '<unknown>')`,
       ...this.buildCallConditions(filters, 'c', 'ce'),
     ];
 
@@ -233,7 +235,8 @@ export class ReportsService {
 
   async topCarMakes(limit = 10, filters: QueryReportsDto = {}) {
     const conditions = [
-      Prisma.sql`ce.car_make IS NOT NULL AND ce.car_make <> ''`,
+      // Same reasoning as topCarModels -- "Unknown" is a placeholder, not a real make.
+      Prisma.sql`ce.car_make IS NOT NULL AND ce.car_make <> '' AND lower(ce.car_make) NOT IN ('unknown', '<unknown>')`,
       ...this.buildCallConditions(filters, 'c', 'ce'),
     ];
 
@@ -251,7 +254,9 @@ export class ReportsService {
 
   async topProducts(limit = 10, filters: QueryReportsDto = {}) {
     const needsJoin = this.needsExtractionJoin(filters);
-    const conditions = this.buildCallConditions(filters, 'c', needsJoin ? 'ce' : undefined);
+    // No product in the catalog is actually named "Unknown" today, but this
+    // guards against one slipping in the same way it did for car make/model.
+    const conditions = [Prisma.sql`lower(p.name) <> 'unknown'`, ...this.buildCallConditions(filters, 'c', needsJoin ? 'ce' : undefined)];
     const whereSql = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
     const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = c.id` : Prisma.empty;
 
