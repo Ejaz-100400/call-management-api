@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { ToArray } from '../../common/array-query.util';
 
 export class QueryCustomersDto {
@@ -34,6 +34,12 @@ export class QueryCustomersDto {
   @IsArray()
   @IsIn(['pending', 'processing', 'completed', 'failed'], { each: true })
   status?: ('pending' | 'processing' | 'completed' | 'failed')[]; // matches any of the customer's calls
+
+  @IsOptional()
+  @ToArray()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  productId?: string[]; // matches any of the customer's calls
 
   @IsOptional()
   @Type(() => Number)

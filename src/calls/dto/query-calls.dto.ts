@@ -79,6 +79,12 @@ export class QueryCallsDto {
   employeeId?: string[];
 
   @IsOptional()
+  @ToArray()
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  productId?: string[];
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

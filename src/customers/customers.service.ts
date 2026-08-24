@@ -24,6 +24,7 @@ export class CustomersService {
     const callFilter: Prisma.CallWhereInput = {
       ...(query.category?.length && { businessCategory: { in: query.category } }),
       ...(query.status?.length && { status: { in: query.status } }),
+      ...(query.productId?.length && { products: { some: { productId: { in: query.productId } } } }),
       ...(Object.keys(extractionFilter).length > 0 && { extraction: extractionFilter }),
     };
 
