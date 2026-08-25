@@ -9,13 +9,12 @@ import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
 export class FollowUpsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(query: QueryFollowUpsDto) {
-    const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 20;
-
-    // Everything that describes the underlying call (not the follow-up task
-    // itself) is filtered through this nested relation, same shape as
-    // Calls/Customers' own where-building.
+  // Everything that describes the underlying call (not the follow-up task
+  // itself) is filtered through this nested relation, same shape as
+  // Calls/Customers' own where-building. Shared by findAll and counts so
+  // the KPI tiles always reflect exactly the same filters as the list below
+  // them, rather than drifting out of sync with each other.
+  private buildWhere(query: QueryFollowUpsDto, opts: { includeStatus: boolean }): Prisma.FollowUpWhereInput {
     const callFilter: Prisma.CallWhereInput = {
       ...(query.category?.length && { businessCategory: { in: query.category } }),
       ...(query.branch?.length && { branch: { in: query.branch } }),
@@ -43,12 +42,18 @@ export class FollowUpsService {
       }),
     };
 
-    const where: Prisma.FollowUpWhereInput = {
-      ...(query.status && { status: query.status }),
+    return {
+      ...(opts.includeStatus && query.status && { status: query.status }),
       ...(query.assignedTo && { assignedTo: query.assignedTo }),
       ...(query.dueBefore && { dueDate: { lte: new Date(query.dueBefore) } }),
       ...(Object.keys(callFilter).length > 0 && { call: callFilter }),
     };
+  }
+
+  async findAll(query: QueryFollowUpsDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const where = this.buildWhere(query, { includeStatus: true });
 
     const [items, total] = await Promise.all([
       this.prisma.followUp.findMany({
@@ -65,6 +70,18 @@ export class FollowUpsService {
     ]);
 
     return { items, total, page, pageSize };
+  }
+
+  /**
+   * Powers the Pending/Missed/Completed KPI tiles -- deliberately excludes
+   * query.status itself (grouping BY status wouldn't mean anything if
+   * status were also a filter) but respects every other active filter, so
+   * the tiles match what's actually shown in the list below them.
+   */
+  async counts(query: QueryFollowUpsDto) {
+    const where = this.buildWhere(query, { includeStatus: false });
+    const grouped = await this.prisma.followUp.groupBy({ by: ['status'], where, _count: true });
+    return grouped.map((g) => ({ status: g.status, count: g._count }));
   }
 
   async update(id: string, dto: UpdateFollowUpDto) {

@@ -13,6 +13,11 @@ export class FollowUpsController {
     return this.followUpsService.findAll(query);
   }
 
+  @Get('counts')
+  counts(@Query() query: QueryFollowUpsDto) {
+    return this.followUpsService.counts(query);
+  }
+
   @Patch(':id')
   @Roles('admin', 'manager')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFollowUpDto) {
