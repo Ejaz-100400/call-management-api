@@ -133,6 +133,7 @@ export class ReportsService {
     // imported historical follow-ups the same way the Follow-ups page does.
     const followUpTotal = followUpStatusCounts.reduce((sum, s) => sum + s._count, 0);
     const followUpCompletedCount = followUpStatusCounts.find((s) => s.status === 'completed')?._count ?? 0;
+    const followUpMissedCount = followUpStatusCounts.find((s) => s.status === 'missed')?._count ?? 0;
 
     return {
       totalCalls, // always equals carGlassesEnquiries + carModificationEnquiries + unknownCategoryEnquiries
@@ -141,6 +142,10 @@ export class ReportsService {
       unknownCategoryEnquiries: unknownCategory,
       followUpsPending,
       followUpsOverdue,
+      // From 17 Aug 2026 onward only (imported historical data excluded) --
+      // same window as followUpCompletionRate below.
+      followUpsCompleted: followUpCompletedCount,
+      followUpsMissed: followUpMissedCount,
       avgCallDurationSeconds:
         durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
       interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
