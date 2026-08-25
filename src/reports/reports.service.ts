@@ -85,8 +85,17 @@ export class ReportsService {
     return Boolean(filters.carMake?.length || filters.carModel?.length || filters.sentiment?.length);
   }
 
+  // Same reasoning as FollowUpsService: historical imported data never
+  // represented real, actionable callback work, so it's excluded from any
+  // metric about how follow-ups are actually being worked.
+  private static readonly IMPORT_CUTOFF = startOfDayIST('2026-08-17');
+
   async summary(filters: QueryReportsDto) {
     const base = this.buildCallWhere(filters);
+    const followUpCallFilter: Prisma.CallWhereInput = {
+      ...base,
+      NOT: { callDate: { lt: ReportsService.IMPORT_CUTOFF }, extraction: { extractedByModel: 'manual_import' } },
+    };
     const [
       totalCalls,
       carGlasses,
@@ -97,6 +106,7 @@ export class ReportsService {
       durationAgg,
       sentimentCounts,
       customerCallCounts,
+      followUpStatusCounts,
     ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
@@ -107,6 +117,7 @@ export class ReportsService {
       this.prisma.call.aggregate({ where: base, _avg: { durationSeconds: true } }),
       this.prisma.callExtraction.groupBy({ by: ['sentiment'], where: { sentiment: { not: null }, call: base }, _count: true }),
       this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } }, _count: true }),
+      this.prisma.followUp.groupBy({ by: ['status'], where: { call: followUpCallFilter }, _count: true }),
     ]);
 
     const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
@@ -116,6 +127,12 @@ export class ReportsService {
     // filtered set -- narrowing the filters (e.g. to a date range) narrows
     // this count right along with it, same as every other tile here.
     const returningCustomerCount = customerCallCounts.filter((c) => c._count > 1).length;
+
+    // % of follow-ups actually closed out, distinct from interestedRate
+    // (which reads sentiment, not whether anyone acted on it). Excludes
+    // imported historical follow-ups the same way the Follow-ups page does.
+    const followUpTotal = followUpStatusCounts.reduce((sum, s) => sum + s._count, 0);
+    const followUpCompletedCount = followUpStatusCounts.find((s) => s.status === 'completed')?._count ?? 0;
 
     return {
       totalCalls, // always equals carGlassesEnquiries + carModificationEnquiries + unknownCategoryEnquiries
@@ -127,6 +144,7 @@ export class ReportsService {
       avgCallDurationSeconds:
         durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
       interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
+      followUpCompletionRate: followUpTotal > 0 ? Math.round((followUpCompletedCount / followUpTotal) * 100) : null,
       totalCustomers: customerCount,
       returningCustomers: returningCustomerCount,
     };
