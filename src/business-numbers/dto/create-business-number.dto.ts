@@ -8,6 +8,10 @@ export class CreateBusinessNumberDto {
   @IsString()
   exophoneNumber?: string;
 
+  @IsOptional()
+  @IsString()
+  whatsappPhoneNumberId?: string;
+
   @IsIn(['car_glasses', 'car_modifications'])
   category: 'car_glasses' | 'car_modifications';
 

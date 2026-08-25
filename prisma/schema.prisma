@@ -102,6 +102,7 @@ model Call {
   id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   externalCallId      String?          @unique @map("external_call_id")
   direction           CallDirection    @default(inbound)
+  channel             Channel          @default(phone)
   businessCategory    BusinessCategory @map("business_category")
   // Which physical location this customer was ultimately routed to. The
   // team answers every call at Ambattur (the headquarters) and redirects
@@ -196,6 +197,10 @@ model BusinessNumber {
   // from phoneNumber so the settings page can keep showing the published
   // business line to staff.
   exophoneNumber   String?          @unique @map("exophone_number")
+  // Meta's numeric Phone Number ID for this line's WhatsApp Business
+  // Platform registration -- calling webhooks identify the number this way,
+  // not by the phone number itself (found in WhatsApp Manager > API Setup).
+  whatsappPhoneNumberId String?      @unique @map("whatsapp_phone_number_id")
   businessCategory BusinessCategory @map("business_category")
   label            String
   createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -788,6 +793,14 @@ enum CallDirection {
   outbound
 
   @@map("call_direction")
+  @@schema("public")
+}
+
+enum Channel {
+  phone
+  whatsapp
+
+  @@map("channel")
   @@schema("public")
 }
 

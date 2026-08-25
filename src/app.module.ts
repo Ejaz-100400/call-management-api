@@ -17,6 +17,7 @@ import { QueueModule } from './queue/queue.module';
 import { ReportsModule } from './reports/reports.module';
 import { TeamModule } from './team/team.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     PerformanceModule,
     TeamModule,
     WebhooksModule,
+    WhatsappModule,
   ],
   controllers: [HealthController],
 })

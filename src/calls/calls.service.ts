@@ -37,6 +37,7 @@ export class CallsService {
       ...(query.status?.length && { status: { in: query.status } }),
       ...(query.employeeId?.length && { employeeId: { in: query.employeeId } }),
       ...(query.branch?.length && { branch: { in: query.branch } }),
+      ...(query.channel?.length && { channel: { in: query.channel } }),
       ...(query.productId?.length && { products: { some: { productId: { in: query.productId } } } }),
       ...((query.dateFrom || query.dateTo) && {
         callDate: {

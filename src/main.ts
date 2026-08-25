@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, type Request } from 'express';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -11,7 +11,11 @@ async function bootstrap() {
   // swallowed .catch on recordHistory), leaving no audit log entry for the
   // import even though the calls themselves were saved fine.
   const app = await NestFactory.create(AppModule, { bodyParser: false });
-  app.use(json({ limit: '15mb' }));
+  // Captures the raw request body alongside express's usual JSON parsing --
+  // needed to verify Meta's X-Hub-Signature-256 header on the WhatsApp
+  // webhook, which is an HMAC over the exact raw bytes Meta sent (the
+  // already-parsed/re-serialized body won't byte-for-byte match).
+  app.use(json({ limit: '15mb', verify: (req: Request & { rawBody?: Buffer }, _res, buf) => { req.rawBody = buf; } }));
   app.use(urlencoded({ extended: true, limit: '15mb' }));
 
   // Comma-separated list of dashboard origins allowed to call this API. Defaults

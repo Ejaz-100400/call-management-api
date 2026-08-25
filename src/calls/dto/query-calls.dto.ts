@@ -57,6 +57,12 @@ export class QueryCallsDto {
   branch?: ('ambattur' | 'kattankulathur' | 'sithalapakkam' | 'pondicherry')[];
 
   @IsOptional()
+  @ToArray()
+  @IsArray()
+  @IsIn(['phone', 'whatsapp'], { each: true })
+  channel?: ('phone' | 'whatsapp')[];
+
+  @IsOptional()
   @IsDateString()
   dateFrom?: string;
 

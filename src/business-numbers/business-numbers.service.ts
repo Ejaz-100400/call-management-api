@@ -8,6 +8,7 @@ export interface BusinessNumberView {
   id: string;
   number: string;
   exophoneNumber: string | null;
+  whatsappPhoneNumberId: string | null;
   category: BusinessCategory;
   label: string;
 }
@@ -28,6 +29,7 @@ export class BusinessNumbersService {
       data: {
         phoneNumber: dto.phoneNumber,
         exophoneNumber: dto.exophoneNumber || null,
+        whatsappPhoneNumberId: dto.whatsappPhoneNumberId || null,
         businessCategory: dto.category,
         label: dto.label,
       },
@@ -49,6 +51,7 @@ export class BusinessNumbersService {
       data: {
         phoneNumber: dto.phoneNumber,
         exophoneNumber: dto.exophoneNumber === undefined ? undefined : dto.exophoneNumber || null,
+        whatsappPhoneNumberId: dto.whatsappPhoneNumberId === undefined ? undefined : dto.whatsappPhoneNumberId || null,
         businessCategory: dto.category,
         label: dto.label,
         updatedAt: new Date(),
@@ -92,13 +95,28 @@ export class BusinessNumbersService {
     return row !== null;
   }
 
+  /** Same idea as resolveCategory, but keyed on Meta's WhatsApp Phone Number ID -- used by the WhatsApp calling webhook. */
+  async resolveCategoryByWhatsAppId(whatsappPhoneNumberId: string | undefined): Promise<BusinessCategory> {
+    if (!whatsappPhoneNumberId) return 'unknown';
+    const row = await this.prisma.businessNumber.findUnique({ where: { whatsappPhoneNumberId } });
+    return row?.businessCategory ?? 'unknown';
+  }
+
   private toView(row: {
     id: string;
     phoneNumber: string;
     exophoneNumber: string | null;
+    whatsappPhoneNumberId: string | null;
     businessCategory: BusinessCategory;
     label: string;
   }): BusinessNumberView {
-    return { id: row.id, number: row.phoneNumber, exophoneNumber: row.exophoneNumber, category: row.businessCategory, label: row.label };
+    return {
+      id: row.id,
+      number: row.phoneNumber,
+      exophoneNumber: row.exophoneNumber,
+      whatsappPhoneNumberId: row.whatsappPhoneNumberId,
+      category: row.businessCategory,
+      label: row.label,
+    };
   }
 }
