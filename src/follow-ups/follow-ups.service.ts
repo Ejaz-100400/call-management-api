@@ -9,6 +9,13 @@ import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
 export class FollowUpsService {
   constructor(private prisma: PrismaService) {}
 
+  // Historical data brought in via the one-time import never represented
+  // real, actionable callback work -- it's bulk-loaded record-keeping, not
+  // something staff are meant to work through on this page. Permanently
+  // excluded (not a togglable filter) rather than deleted or reclassified,
+  // so the imported data itself stays exactly as imported.
+  private static readonly IMPORT_CUTOFF = startOfDayIST('2026-08-17');
+
   // Everything that describes the underlying call (not the follow-up task
   // itself) is filtered through this nested relation, same shape as
   // Calls/Customers' own where-building. Shared by findAll and counts so
@@ -16,6 +23,10 @@ export class FollowUpsService {
   // them, rather than drifting out of sync with each other.
   private buildWhere(query: QueryFollowUpsDto, opts: { includeStatus: boolean }): Prisma.FollowUpWhereInput {
     const callFilter: Prisma.CallWhereInput = {
+      NOT: {
+        callDate: { lt: FollowUpsService.IMPORT_CUTOFF },
+        extraction: { extractedByModel: 'manual_import' },
+      },
       ...(query.category?.length && { businessCategory: { in: query.category } }),
       ...(query.branch?.length && { branch: { in: query.branch } }),
       ...(query.employeeId?.length && { employeeId: { in: query.employeeId } }),
@@ -46,7 +57,8 @@ export class FollowUpsService {
       ...(opts.includeStatus && query.status && { status: query.status }),
       ...(query.assignedTo && { assignedTo: query.assignedTo }),
       ...(query.dueBefore && { dueDate: { lte: new Date(query.dueBefore) } }),
-      ...(Object.keys(callFilter).length > 0 && { call: callFilter }),
+      // callFilter always has at least the import-cutoff exclusion above.
+      call: callFilter,
     };
   }
 
