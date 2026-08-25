@@ -239,6 +239,27 @@ export class CallsService {
       if (Object.keys(vehicleUpdates).length > 0) {
         await this.prisma.customer.update({ where: { id: call.customerId }, data: vehicleUpdates });
       }
+
+      // A confirmed name/vehicle detail belongs to the customer, not just
+      // this one call -- backfill it onto this same customer's OTHER calls
+      // too, wherever that specific field is still blank there. Deliberately
+      // per-field and gap-filling only: never overwrites a value another
+      // call's own extraction already has (that call may genuinely differ,
+      // e.g. a different variant mentioned that time), and never touches
+      // productsDiscussed/summary/budget/etc -- those describe what was
+      // actually discussed on THAT call, not a customer-level fact.
+      if (customerNameProvided && trimmedCustomerName) {
+        await this.prisma.callExtraction.updateMany({
+          where: { call: { customerId: call.customerId }, callId: { not: callId }, customerName: null },
+          data: { customerName: trimmedCustomerName },
+        });
+      }
+      for (const [field, value] of Object.entries(vehicleUpdates)) {
+        await this.prisma.callExtraction.updateMany({
+          where: { call: { customerId: call.customerId }, callId: { not: callId }, [field]: null },
+          data: { [field]: value },
+        });
+      }
     }
 
     await this.prisma.auditLog.create({
