@@ -8,6 +8,7 @@ import { QueryStockItemsDto } from './dto/query-stock-items.dto';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
 import { QueryStockOverviewDto } from './dto/query-stock-overview.dto';
 import { UpdateStockItemDto } from './dto/update-stock-item.dto';
+import { UpdateStockMovementDto } from './dto/update-stock-movement.dto';
 import { StockService } from './stock.service';
 
 @Controller('stock')
@@ -51,6 +52,12 @@ export class StockController {
   @Roles('admin', 'manager')
   createMovement(@Body() dto: CreateStockMovementDto, @CurrentUser() user: User) {
     return this.stockService.createMovement(dto, user.id);
+  }
+
+  @Patch('movements/:id')
+  @Roles('admin', 'manager')
+  updateMovement(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStockMovementDto, @CurrentUser() user: User) {
+    return this.stockService.updateMovement(id, dto, user.id);
   }
 
   @Delete('movements/:id')

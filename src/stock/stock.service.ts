@@ -7,6 +7,7 @@ import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
 import { QueryStockItemsDto } from './dto/query-stock-items.dto';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
 import { UpdateStockItemDto } from './dto/update-stock-item.dto';
+import { UpdateStockMovementDto } from './dto/update-stock-movement.dto';
 
 const ALL_LOCATIONS = STOCK_LOCATIONS as unknown as StockLocation[];
 
@@ -194,6 +195,14 @@ export class StockService {
     const item = await this.prisma.stockItem.findUnique({ where: { id: dto.stockItemId } });
     if (!item) throw new NotFoundException(`Stock item ${dto.stockItemId} not found`);
 
+    // Warehouse only ever gets stock through the Stock Items screen (its
+    // starting-stock fields) -- from there it only moves out, either
+    // distributed to a branch or consumed, so "stock in" at Warehouse
+    // isn't a valid movement to log here.
+    if (dto.location === 'warehouse' && dto.type === 'in') {
+      throw new BadRequestException('Warehouse only supports "stock out" here -- add warehouse stock from the Stock Items screen instead.');
+    }
+
     if (dto.type === 'out') {
       const current = await this.quantityFor(dto.stockItemId, dto.location);
       if (dto.quantity > current) {
@@ -214,6 +223,40 @@ export class StockService {
       },
       include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
     });
+  }
+
+  async updateMovement(id: string, dto: UpdateStockMovementDto, userId: string) {
+    const movement = await this.prisma.stockMovement.findUnique({ where: { id }, include: { stockItem: { select: { name: true, unit: true } } } });
+    if (!movement) throw new NotFoundException(`Movement ${id} not found`);
+
+    if (dto.quantity !== undefined && dto.quantity !== movement.quantity) {
+      // Same reasoning as delete's guard -- swap in the new quantity's
+      // effect instead of the old one and make sure that still doesn't
+      // push the item/location negative.
+      const current = await this.quantityFor(movement.stockItemId, movement.location);
+      const withoutOld = current - (movement.type === 'in' ? movement.quantity : -movement.quantity);
+      const withNew = withoutOld + (movement.type === 'in' ? dto.quantity : -dto.quantity);
+      if (withNew < 0) {
+        throw new BadRequestException(
+          `Can't change the quantity to ${dto.quantity} -- that would leave "${movement.stockItem.name}" at a negative quantity.`,
+        );
+      }
+    }
+
+    const updated = await this.prisma.stockMovement.update({
+      where: { id },
+      data: {
+        quantity: dto.quantity,
+        movementDate: dto.movementDate ? new Date(dto.movementDate) : undefined,
+        reason: dto.reason,
+        notes: dto.notes,
+      },
+      include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+    });
+    await this.prisma.auditLog.create({
+      data: { userId, action: 'update_stock_movement', entity: 'stock_movements', entityId: id, details: dto as Prisma.InputJsonValue },
+    });
+    return updated;
   }
 
   async deleteMovement(id: string, userId: string) {
