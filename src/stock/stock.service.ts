@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Branch, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
@@ -64,10 +64,47 @@ export class StockService {
     });
   }
 
+  // Resolves the name/category a stock item should be created or updated
+  // with. When linked to a catalog product, those two fields always come
+  // from the product itself (never trust a client-supplied copy) -- that's
+  // the whole point of linking rather than just typing a name that happens
+  // to match. A custom item (no productId) falls back to what was typed.
+  private async resolveNameAndCategory(dto: { productId?: string; name?: string; category?: 'car_glasses' | 'car_modifications' }) {
+    if (dto.productId) {
+      const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+      if (!product) throw new NotFoundException(`Product ${dto.productId} not found`);
+      return { name: product.name, category: product.category as 'car_glasses' | 'car_modifications' };
+    }
+    if (!dto.name || !dto.category) {
+      throw new BadRequestException('Either pick a product from the catalog, or provide a name and category for a custom item.');
+    }
+    return { name: dto.name, category: dto.category };
+  }
+
   async createItem(dto: CreateStockItemDto, userId: string) {
-    const item = await this.prisma.stockItem.create({
-      data: { name: dto.name, category: dto.category, unit: dto.unit || 'pcs', reorderThreshold: dto.reorderThreshold ?? 0, active: dto.active ?? true },
+    const { name, category } = await this.resolveNameAndCategory(dto);
+
+    const item = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.stockItem.create({
+        data: { name, category, productId: dto.productId, unit: dto.unit || 'pcs', reorderThreshold: dto.reorderThreshold ?? 0, active: dto.active ?? true },
+      });
+      const initialEntries = (dto.initialStock ?? []).filter((e) => e.quantity > 0);
+      if (initialEntries.length > 0) {
+        await tx.stockMovement.createMany({
+          data: initialEntries.map((entry) => ({
+            stockItemId: created.id,
+            branch: entry.branch,
+            type: 'in' as const,
+            quantity: entry.quantity,
+            movementDate: new Date(),
+            reason: 'Initial stock',
+            enteredByUserId: userId,
+          })),
+        });
+      }
+      return created;
     });
+
     await this.prisma.auditLog.create({
       data: { userId, action: 'create_stock_item', entity: 'stock_items', entityId: item.id, details: { ...dto } as Prisma.InputJsonValue },
     });
@@ -77,11 +114,46 @@ export class StockService {
   async updateItem(id: string, dto: UpdateStockItemDto, userId: string) {
     const existing = await this.prisma.stockItem.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException(`Stock item ${id} not found`);
-    const item = await this.prisma.stockItem.update({ where: { id }, data: dto });
+
+    const data: Prisma.StockItemUpdateInput = {
+      unit: dto.unit,
+      reorderThreshold: dto.reorderThreshold,
+      active: dto.active,
+    };
+    if (dto.productId !== undefined || dto.name !== undefined || dto.category !== undefined) {
+      const resolved = await this.resolveNameAndCategory({
+        productId: dto.productId,
+        name: dto.name ?? existing.name,
+        category: dto.category ?? (existing.category as 'car_glasses' | 'car_modifications'),
+      });
+      data.name = resolved.name;
+      data.category = resolved.category;
+      if (dto.productId !== undefined) data.product = dto.productId ? { connect: { id: dto.productId } } : { disconnect: true };
+    }
+
+    const item = await this.prisma.stockItem.update({ where: { id }, data });
     await this.prisma.auditLog.create({
       data: { userId, action: 'update_stock_item', entity: 'stock_items', entityId: id, details: dto as Prisma.InputJsonValue },
     });
     return item;
+  }
+
+  async deleteItem(id: string, userId: string) {
+    const item = await this.prisma.stockItem.findUnique({ where: { id } });
+    if (!item) throw new NotFoundException(`Stock item ${id} not found`);
+
+    const movementCount = await this.prisma.stockMovement.count({ where: { stockItemId: id } });
+    if (movementCount > 0) {
+      throw new ConflictException(
+        `"${item.name}" has ${movementCount} logged movement(s). Set it inactive instead of deleting, so the history stays intact.`,
+      );
+    }
+
+    await this.prisma.stockItem.delete({ where: { id } });
+    await this.prisma.auditLog.create({
+      data: { userId, action: 'delete_stock_item', entity: 'stock_items', entityId: id, details: { name: item.name } as Prisma.InputJsonValue },
+    });
+    return { deleted: true };
   }
 
   async findAllMovements(query: QueryStockMovementsDto) {
@@ -144,6 +216,34 @@ export class StockService {
       },
       include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
     });
+  }
+
+  async deleteMovement(id: string, userId: string) {
+    const movement = await this.prisma.stockMovement.findUnique({ where: { id }, include: { stockItem: { select: { name: true, unit: true } } } });
+    if (!movement) throw new NotFoundException(`Movement ${id} not found`);
+
+    // Removing this movement changes the running total by whatever it
+    // contributed -- reverse that to make sure the item/branch wouldn't end
+    // up negative, since other movements may have been logged since.
+    const current = await this.quantityFor(movement.stockItemId, movement.branch);
+    const withoutThis = current - (movement.type === 'in' ? movement.quantity : -movement.quantity);
+    if (withoutThis < 0) {
+      throw new BadRequestException(
+        `Can't delete this -- removing it would leave "${movement.stockItem.name}" at a negative quantity, since other movements were logged after it.`,
+      );
+    }
+
+    await this.prisma.stockMovement.delete({ where: { id } });
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'delete_stock_movement',
+        entity: 'stock_movements',
+        entityId: id,
+        details: { stockItem: movement.stockItem.name, branch: movement.branch, type: movement.type, quantity: movement.quantity } as Prisma.InputJsonValue,
+      },
+    });
+    return { deleted: true };
   }
 
   async overview(filters: { branch?: Branch[]; category?: ('car_glasses' | 'car_modifications')[] }) {

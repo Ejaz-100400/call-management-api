@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -36,6 +36,12 @@ export class StockController {
     return this.stockService.updateItem(id, dto, user.id);
   }
 
+  @Delete('items/:id')
+  @Roles('admin')
+  deleteItem(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+    return this.stockService.deleteItem(id, user.id);
+  }
+
   @Get('movements')
   findAllMovements(@Query() query: QueryStockMovementsDto) {
     return this.stockService.findAllMovements(query);
@@ -45,5 +51,11 @@ export class StockController {
   @Roles('admin', 'manager')
   createMovement(@Body() dto: CreateStockMovementDto, @CurrentUser() user: User) {
     return this.stockService.createMovement(dto, user.id);
+  }
+
+  @Delete('movements/:id')
+  @Roles('admin', 'manager')
+  deleteMovement(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+    return this.stockService.deleteMovement(id, user.id);
   }
 }

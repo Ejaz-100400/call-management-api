@@ -216,7 +216,9 @@ model StockItem {
   unit             String          @default("pcs")
   reorderThreshold Int             @default(0) @map("reorder_threshold")
   active           Boolean         @default(true)
+  productId        String?         @map("product_id") @db.Uuid
   createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   movements        StockMovement[]
 
   @@map("stock_items")
@@ -328,6 +330,7 @@ model Product {
   active    Boolean          @default(true)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   calls     CallProduct[]
+  stockItems StockItem[]
 
   @@map("products")
   @@schema("public")
