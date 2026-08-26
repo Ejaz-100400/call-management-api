@@ -14,10 +14,10 @@ model User {
   name              String
   email             String           @unique
   role              UserRole         @default(viewer)
-  // Separate from `role` on purpose -- the Employee Performance page is
-  // meant for a single specific person (the business owner), not every
-  // admin. Deliberately not folded into the role enum, since granting
-  // "admin" for day-to-day management shouldn't also grant this.
+  // Separate from `role` on purpose -- reserved for a single specific
+  // person (the business owner), not every admin. Deliberately not folded
+  // into the role enum, since granting "admin" for day-to-day management
+  // shouldn't also grant whatever this is used to gate.
   isOwner           Boolean          @default(false) @map("is_owner")
   active            Boolean          @default(true)
   lastLoginAt       DateTime?        @map("last_login_at") @db.Timestamptz(6)
@@ -26,6 +26,8 @@ model User {
   auditLogs         AuditLog[]
   editedExtractions CallExtraction[] @relation("EditedBy")
   importedCalls     Call[]           @relation("ImportedBy")
+  enteredSales      Sale[]
+  enteredEnquiries  InPersonEnquiry[]
   users             users            @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("users")
@@ -44,6 +46,7 @@ model Employee {
   calls     Call[]
   followUps FollowUp[]
   coverage  NumberCoverage[]
+  enquiries InPersonEnquiry[]
 
   @@map("employees")
   @@schema("public")
@@ -91,6 +94,8 @@ model Customer {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
   calls       Call[]
+  sales       Sale[]
+  enquiries   InPersonEnquiry[]
 
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_customers_name_trgm", type: Gin)
   @@index([phoneNumber(ops: raw("gin_trgm_ops"))], map: "idx_customers_phone_trgm", type: Gin)
@@ -127,6 +132,7 @@ model Call {
   importedBy          User?            @relation("ImportedBy", fields: [importedByUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   followUps           FollowUp[]
   transcript          Transcript?
+  matchedSales        Sale[]
 
   @@index([businessCategory], map: "idx_calls_business_category")
   @@index([callDate(sort: Desc)], map: "idx_calls_call_date")
@@ -134,6 +140,65 @@ model Call {
   @@index([employeeId], map: "idx_calls_employee")
   @@index([status], map: "idx_calls_status")
   @@map("calls")
+  @@schema("public")
+}
+
+// A completed sale, entered by staff at end of day (Customer Tracker page).
+// Deliberately not auto-created from a Call or FollowUp -- a phone
+// conversation or a walk-in enquiry is an intent signal, a Sale is staff
+// directly confirming money actually changed hands. customerId/matchedCallId
+// are set at creation time by looking up the phone number against existing
+// Customer/Call records (see SalesService.match), not maintained afterward.
+model Sale {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerPhone   String     @map("customer_phone")
+  customerId      String?    @map("customer_id") @db.Uuid
+  carMake         String?    @map("car_make")
+  carModel        String?    @map("car_model")
+  branch          Branch
+  saleDate        DateTime   @map("sale_date") @db.Date
+  source          SaleSource @default(unknown)
+  matchedCallId   String?    @map("matched_call_id") @db.Uuid
+  notes           String?
+  enteredByUserId String     @map("entered_by_user_id") @db.Uuid
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  customer        Customer?  @relation(fields: [customerId], references: [id], onUpdate: NoAction)
+  matchedCall     Call?      @relation(fields: [matchedCallId], references: [id], onUpdate: NoAction)
+  enteredBy       User       @relation(fields: [enteredByUserId], references: [id], onUpdate: NoAction)
+
+  @@index([saleDate(sort: Desc)], map: "idx_sales_sale_date")
+  @@index([customerId], map: "idx_sales_customer")
+  @@index([branch], map: "idx_sales_branch")
+  @@map("sales")
+  @@schema("public")
+}
+
+// A walk-in at one of the four branches, whether or not they bought --
+// tracks its own conversion funnel (outcome) separate from the phone/
+// WhatsApp funnel Sale.source covers. No reminder/alert is tied to this one
+// (see CustomerTracker's tab split) -- staff log it whenever it happens.
+model InPersonEnquiry {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerPhone   String?        @map("customer_phone")
+  customerId      String?        @map("customer_id") @db.Uuid
+  customerName    String?        @map("customer_name")
+  carMake         String?        @map("car_make")
+  carModel        String?        @map("car_model")
+  branch          Branch
+  enquiryDate     DateTime       @map("enquiry_date") @db.Date
+  outcome         EnquiryOutcome @default(undecided)
+  notes           String?
+  employeeId      String?        @map("employee_id") @db.Uuid
+  enteredByUserId String         @map("entered_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  customer        Customer?      @relation(fields: [customerId], references: [id], onUpdate: NoAction)
+  employee        Employee?      @relation(fields: [employeeId], references: [id], onUpdate: NoAction)
+  enteredBy       User           @relation(fields: [enteredByUserId], references: [id], onUpdate: NoAction)
+
+  @@index([enquiryDate(sort: Desc)], map: "idx_enquiries_enquiry_date")
+  @@index([customerId], map: "idx_enquiries_customer")
+  @@index([branch], map: "idx_enquiries_branch")
+  @@map("in_person_enquiries")
   @@schema("public")
 }
 
@@ -775,6 +840,25 @@ enum Branch {
   pondicherry
 
   @@map("branch")
+  @@schema("public")
+}
+
+enum SaleSource {
+  call
+  whatsapp
+  walk_in
+  unknown
+
+  @@map("sale_source")
+  @@schema("public")
+}
+
+enum EnquiryOutcome {
+  purchased
+  not_purchased
+  undecided
+
+  @@map("enquiry_outcome")
   @@schema("public")
 }
 

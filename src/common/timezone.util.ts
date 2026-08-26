@@ -39,6 +39,17 @@ export function istHour(date: Date): number {
   return new Date(date.getTime() + IST_OFFSET_MS).getUTCHours();
 }
 
+/** Minutes since IST midnight (0-1439) a given instant falls on -- e.g. 20:30 IST = 1230. */
+export function istMinuteOfDay(date: Date): number {
+  const shifted = new Date(date.getTime() + IST_OFFSET_MS);
+  return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
+}
+
+/** Today's IST calendar date as "YYYY-MM-DD" -- for comparing against a date-only column like Sale.saleDate. */
+export function todayIST(): string {
+  return new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 /**
  * The inverse of parseIstTimestamp: renders a real instant as the IST
  * wall-clock string Exotel's own APIs expect (e.g. as a DateCreated filter
