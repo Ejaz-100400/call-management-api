@@ -12,21 +12,18 @@ class InitialStockEntryDto {
 }
 
 export class CreateStockItemDto {
-  // Either productId (name/category derived server-side from the linked
-  // catalog product) or name+category (a custom item not in the catalog)
-  // must be provided -- enforced in the service, since class-validator
-  // can't express "one of these two shapes" cleanly.
+  // The catalog product this item's subcategory rolls up under -- purely a
+  // grouping/link, never overrides the name below (e.g. subcategory "Fog
+  // Projector" might hold several distinctly-named stock items).
   @IsOptional()
   @IsUUID()
   productId?: string;
 
-  @IsOptional()
   @IsString()
-  name?: string;
+  name: string;
 
-  @IsOptional()
   @IsIn(['car_glasses', 'car_modifications'])
-  category?: 'car_glasses' | 'car_modifications';
+  category: 'car_glasses' | 'car_modifications';
 
   @IsOptional()
   @IsString()

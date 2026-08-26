@@ -65,29 +65,29 @@ export class StockService {
     });
   }
 
-  // Resolves the name/category a stock item should be created or updated
-  // with. When linked to a catalog product, those two fields always come
-  // from the product itself (never trust a client-supplied copy) -- that's
-  // the whole point of linking rather than just typing a name that happens
-  // to match. A custom item (no productId) falls back to what was typed.
-  private async resolveNameAndCategory(dto: { productId?: string; name?: string; category?: 'car_glasses' | 'car_modifications' }) {
-    if (dto.productId) {
-      const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
-      if (!product) throw new NotFoundException(`Product ${dto.productId} not found`);
-      return { name: product.name, category: product.category as 'car_glasses' | 'car_modifications' };
-    }
-    if (!dto.name || !dto.category) {
-      throw new BadRequestException('Either pick a product from the catalog, or provide a name and category for a custom item.');
-    }
-    return { name: dto.name, category: dto.category };
+  // productId is purely a subcategory link -- verify it exists (a friendlier
+  // 404 than the raw FK violation) but never let it override the name/
+  // category the user actually typed, since several distinctly-named items
+  // (e.g. "Amy Tricolor Fog", "Osram H4") can share one catalog subcategory.
+  private async assertProductExists(productId?: string) {
+    if (!productId) return;
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException(`Product ${productId} not found`);
   }
 
   async createItem(dto: CreateStockItemDto, userId: string) {
-    const { name, category } = await this.resolveNameAndCategory(dto);
+    await this.assertProductExists(dto.productId);
 
     const item = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stockItem.create({
-        data: { name, category, productId: dto.productId, unit: dto.unit || 'pcs', reorderThreshold: dto.reorderThreshold ?? 0, active: dto.active ?? true },
+        data: {
+          name: dto.name,
+          category: dto.category,
+          productId: dto.productId,
+          unit: dto.unit || 'pcs',
+          reorderThreshold: dto.reorderThreshold ?? 0,
+          active: dto.active ?? true,
+        },
       });
       const initialEntries = (dto.initialStock ?? []).filter((e) => e.quantity > 0);
       if (initialEntries.length > 0) {
@@ -107,7 +107,7 @@ export class StockService {
     });
 
     await this.prisma.auditLog.create({
-      data: { userId, action: 'create_stock_item', entity: 'stock_items', entityId: item.id, details: { ...dto } as Prisma.InputJsonValue },
+      data: { userId, action: 'create_stock_item', entity: 'stock_items', entityId: item.id, details: { ...dto } as unknown as Prisma.InputJsonValue },
     });
     return item;
   }
@@ -116,20 +116,17 @@ export class StockService {
     const existing = await this.prisma.stockItem.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException(`Stock item ${id} not found`);
 
+    if (dto.productId !== undefined) await this.assertProductExists(dto.productId);
+
     const data: Prisma.StockItemUpdateInput = {
+      name: dto.name,
+      category: dto.category,
       unit: dto.unit,
       reorderThreshold: dto.reorderThreshold,
       active: dto.active,
     };
-    if (dto.productId !== undefined || dto.name !== undefined || dto.category !== undefined) {
-      const resolved = await this.resolveNameAndCategory({
-        productId: dto.productId,
-        name: dto.name ?? existing.name,
-        category: dto.category ?? (existing.category as 'car_glasses' | 'car_modifications'),
-      });
-      data.name = resolved.name;
-      data.category = resolved.category;
-      if (dto.productId !== undefined) data.product = dto.productId ? { connect: { id: dto.productId } } : { disconnect: true };
+    if (dto.productId !== undefined) {
+      data.product = dto.productId ? { connect: { id: dto.productId } } : { disconnect: true };
     }
 
     const item = await this.prisma.stockItem.update({ where: { id }, data });
