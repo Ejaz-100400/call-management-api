@@ -1,9 +1,10 @@
 import { Type } from 'class-transformer';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, ValidateNested } from 'class-validator';
+import { STOCK_LOCATIONS, StockLocationValue } from '../stock-location.util';
 
 class InitialStockEntryDto {
-  @IsIn(['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'])
-  branch: 'ambattur' | 'kattankulathur' | 'sithalapakkam' | 'pondicherry';
+  @IsIn(STOCK_LOCATIONS)
+  location: StockLocationValue;
 
   @IsInt()
   @Min(1)

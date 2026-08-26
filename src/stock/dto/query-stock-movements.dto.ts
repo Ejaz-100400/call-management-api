@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { ToArray } from '../../common/array-query.util';
+import { STOCK_LOCATIONS, StockLocationValue } from '../stock-location.util';
 
 export class QueryStockMovementsDto {
   @IsOptional()
@@ -10,8 +11,8 @@ export class QueryStockMovementsDto {
   @IsOptional()
   @ToArray()
   @IsArray()
-  @IsIn(['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'], { each: true })
-  branch?: ('ambattur' | 'kattankulathur' | 'sithalapakkam' | 'pondicherry')[];
+  @IsIn(STOCK_LOCATIONS, { each: true })
+  location?: StockLocationValue[];
 
   @IsOptional()
   @ToArray()

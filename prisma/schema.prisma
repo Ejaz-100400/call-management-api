@@ -232,7 +232,7 @@ model StockItem {
 model StockMovement {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   stockItemId     String            @map("stock_item_id") @db.Uuid
-  branch          Branch
+  location        StockLocation
   type            StockMovementType
   quantity        Int
   reason          String?
@@ -243,7 +243,7 @@ model StockMovement {
   stockItem       StockItem         @relation(fields: [stockItemId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   enteredBy       User              @relation(fields: [enteredByUserId], references: [id], onUpdate: NoAction)
 
-  @@index([stockItemId, branch], map: "idx_stock_movements_item_branch")
+  @@index([stockItemId, location], map: "idx_stock_movements_item_location")
   @@index([movementDate(sort: Desc)], map: "idx_stock_movements_date")
   @@map("stock_movements")
   @@schema("public")
@@ -916,6 +916,21 @@ enum StockMovementType {
   out
 
   @@map("stock_movement_type")
+  @@schema("public")
+}
+
+// The 4 physical branches, plus a 5th non-branch pool for stock held
+// centrally rather than at any one location -- kept separate from Branch
+// (used by Sales/Enquiries/Calls) since "warehouse" only ever makes sense
+// as a stock location, never as a place a customer visited or called.
+enum StockLocation {
+  ambattur
+  kattankulathur
+  sithalapakkam
+  pondicherry
+  warehouse
+
+  @@map("stock_location")
   @@schema("public")
 }
 

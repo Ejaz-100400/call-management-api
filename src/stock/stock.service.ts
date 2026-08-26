@@ -1,45 +1,46 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Branch, Prisma } from '@prisma/client';
+import { Prisma, StockLocation } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { STOCK_LOCATIONS } from './stock-location.util';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
 import { QueryStockItemsDto } from './dto/query-stock-items.dto';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
 import { UpdateStockItemDto } from './dto/update-stock-item.dto';
 
-const ALL_BRANCHES: Branch[] = ['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'];
+const ALL_LOCATIONS = STOCK_LOCATIONS as unknown as StockLocation[];
 
 @Injectable()
 export class StockService {
   constructor(private prisma: PrismaService) {}
 
   // Current on-hand quantity is never stored -- it's the sum of `in`
-  // movements minus `out` movements for that item/branch, computed here on
-  // every read. At this business's volume that's cheap, and it avoids ever
-  // having a cached number drift from the movement log that's the actual
-  // source of truth.
-  private async quantitiesByItem(stockItemIds: string[]): Promise<Map<string, Map<Branch, number>>> {
+  // movements minus `out` movements for that item/location, computed here
+  // on every read. At this business's volume that's cheap, and it avoids
+  // ever having a cached number drift from the movement log that's the
+  // actual source of truth.
+  private async quantitiesByItem(stockItemIds: string[]): Promise<Map<string, Map<StockLocation, number>>> {
     if (stockItemIds.length === 0) return new Map();
     const sums = await this.prisma.stockMovement.groupBy({
-      by: ['stockItemId', 'branch', 'type'],
+      by: ['stockItemId', 'location', 'type'],
       where: { stockItemId: { in: stockItemIds } },
       _sum: { quantity: true },
     });
-    const result = new Map<string, Map<Branch, number>>();
+    const result = new Map<string, Map<StockLocation, number>>();
     for (const id of stockItemIds) {
-      result.set(id, new Map(ALL_BRANCHES.map((b) => [b, 0])));
+      result.set(id, new Map(ALL_LOCATIONS.map((l) => [l, 0])));
     }
     for (const row of sums) {
-      const branchMap = result.get(row.stockItemId)!;
+      const locationMap = result.get(row.stockItemId)!;
       const signed = (row._sum.quantity ?? 0) * (row.type === 'in' ? 1 : -1);
-      branchMap.set(row.branch, (branchMap.get(row.branch) ?? 0) + signed);
+      locationMap.set(row.location, (locationMap.get(row.location) ?? 0) + signed);
     }
     return result;
   }
 
-  private async quantityFor(stockItemId: string, branch: Branch): Promise<number> {
+  private async quantityFor(stockItemId: string, location: StockLocation): Promise<number> {
     const map = await this.quantitiesByItem([stockItemId]);
-    return map.get(stockItemId)?.get(branch) ?? 0;
+    return map.get(stockItemId)?.get(location) ?? 0;
   }
 
   async findAllItems(query: QueryStockItemsDto) {
@@ -53,12 +54,12 @@ export class StockService {
     const quantities = await this.quantitiesByItem(items.map((i) => i.id));
 
     return items.map((item) => {
-      const branchMap = quantities.get(item.id) ?? new Map();
+      const locationMap = quantities.get(item.id) ?? new Map();
       return {
         ...item,
-        quantities: ALL_BRANCHES.map((branch) => {
-          const quantity = branchMap.get(branch) ?? 0;
-          return { branch, quantity, lowStock: item.reorderThreshold > 0 && quantity < item.reorderThreshold };
+        quantities: ALL_LOCATIONS.map((location) => {
+          const quantity = locationMap.get(location) ?? 0;
+          return { location, quantity, lowStock: item.reorderThreshold > 0 && quantity < item.reorderThreshold };
         }),
       };
     });
@@ -93,7 +94,7 @@ export class StockService {
         await tx.stockMovement.createMany({
           data: initialEntries.map((entry) => ({
             stockItemId: created.id,
-            branch: entry.branch,
+            location: entry.location,
             type: 'in' as const,
             quantity: entry.quantity,
             movementDate: new Date(),
@@ -162,7 +163,7 @@ export class StockService {
 
     const where: Prisma.StockMovementWhereInput = {
       ...(query.stockItemId && { stockItemId: query.stockItemId }),
-      ...(query.branch?.length && { branch: { in: query.branch } }),
+      ...(query.location?.length && { location: { in: query.location } }),
       ...(query.type?.length && { type: { in: query.type } }),
       ...(query.search && {
         OR: [
@@ -197,16 +198,16 @@ export class StockService {
     if (!item) throw new NotFoundException(`Stock item ${dto.stockItemId} not found`);
 
     if (dto.type === 'out') {
-      const current = await this.quantityFor(dto.stockItemId, dto.branch as Branch);
+      const current = await this.quantityFor(dto.stockItemId, dto.location);
       if (dto.quantity > current) {
-        throw new BadRequestException(`Only ${current} ${item.unit} of "${item.name}" in stock at this branch -- can't remove ${dto.quantity}.`);
+        throw new BadRequestException(`Only ${current} ${item.unit} of "${item.name}" in stock at this location -- can't remove ${dto.quantity}.`);
       }
     }
 
     return this.prisma.stockMovement.create({
       data: {
         stockItemId: dto.stockItemId,
-        branch: dto.branch,
+        location: dto.location,
         type: dto.type,
         quantity: dto.quantity,
         movementDate: new Date(dto.movementDate),
@@ -223,9 +224,9 @@ export class StockService {
     if (!movement) throw new NotFoundException(`Movement ${id} not found`);
 
     // Removing this movement changes the running total by whatever it
-    // contributed -- reverse that to make sure the item/branch wouldn't end
-    // up negative, since other movements may have been logged since.
-    const current = await this.quantityFor(movement.stockItemId, movement.branch);
+    // contributed -- reverse that to make sure the item/location wouldn't
+    // end up negative, since other movements may have been logged since.
+    const current = await this.quantityFor(movement.stockItemId, movement.location);
     const withoutThis = current - (movement.type === 'in' ? movement.quantity : -movement.quantity);
     if (withoutThis < 0) {
       throw new BadRequestException(
@@ -240,27 +241,27 @@ export class StockService {
         action: 'delete_stock_movement',
         entity: 'stock_movements',
         entityId: id,
-        details: { stockItem: movement.stockItem.name, branch: movement.branch, type: movement.type, quantity: movement.quantity } as Prisma.InputJsonValue,
+        details: { stockItem: movement.stockItem.name, location: movement.location, type: movement.type, quantity: movement.quantity } as Prisma.InputJsonValue,
       },
     });
     return { deleted: true };
   }
 
-  async overview(filters: { branch?: Branch[]; category?: ('car_glasses' | 'car_modifications')[] }) {
+  async overview(filters: { location?: StockLocation[]; category?: ('car_glasses' | 'car_modifications')[] }) {
     const items = await this.prisma.stockItem.findMany({
       where: { active: true, ...(filters.category?.length && { category: { in: filters.category } }) },
     });
     const quantities = await this.quantitiesByItem(items.map((i) => i.id));
-    const branches = filters.branch?.length ? filters.branch : ALL_BRANCHES;
+    const locations = filters.location?.length ? filters.location : ALL_LOCATIONS;
 
-    const lowStockEntries: { stockItemId: string; name: string; category: string; unit: string; branch: Branch; quantity: number; reorderThreshold: number }[] = [];
+    const lowStockEntries: { stockItemId: string; name: string; category: string; unit: string; location: StockLocation; quantity: number; reorderThreshold: number }[] = [];
     const totalsByCategory = new Map<string, number>();
 
     for (const item of items) {
-      const branchMap = quantities.get(item.id) ?? new Map();
+      const locationMap = quantities.get(item.id) ?? new Map();
       let itemTotal = totalsByCategory.get(item.category) ?? 0;
-      for (const branch of branches) {
-        const quantity = branchMap.get(branch) ?? 0;
+      for (const location of locations) {
+        const quantity = locationMap.get(location) ?? 0;
         itemTotal += quantity;
         if (item.reorderThreshold > 0 && quantity < item.reorderThreshold) {
           lowStockEntries.push({
@@ -268,7 +269,7 @@ export class StockService {
             name: item.name,
             category: item.category,
             unit: item.unit,
-            branch,
+            location,
             quantity,
             reorderThreshold: item.reorderThreshold,
           });
