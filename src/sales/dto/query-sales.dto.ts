@@ -12,8 +12,8 @@ export class QuerySalesDto {
   @IsOptional()
   @ToArray()
   @IsArray()
-  @IsIn(['call', 'whatsapp', 'walk_in', 'unknown'], { each: true })
-  source?: ('call' | 'whatsapp' | 'walk_in' | 'unknown')[];
+  @IsIn(['call', 'whatsapp', 'walk_in', 'owner', 'unknown'], { each: true })
+  source?: ('call' | 'whatsapp' | 'walk_in' | 'owner' | 'unknown')[];
 
   @IsOptional()
   @IsString()

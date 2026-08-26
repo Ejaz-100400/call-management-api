@@ -847,6 +847,7 @@ enum SaleSource {
   call
   whatsapp
   walk_in
+  owner
   unknown
 
   @@map("sale_source")
