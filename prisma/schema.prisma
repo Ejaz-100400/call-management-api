@@ -236,6 +236,13 @@ model StockMovement {
   type            StockMovementType
   quantity        Int
   reason          String?
+  // A branch transfer creates two rows (an `out` at the source, an `in` at
+  // the destination) sharing one transferId, so they render as a linked
+  // pair -- relatedLocation is the *other* row's location, letting the UI
+  // show "To Kattankulathur" / "From Ambattur" without parsing free text.
+  // Both stay null for an ordinary (non-transfer) movement.
+  transferId      String?           @map("transfer_id") @db.Uuid
+  relatedLocation StockLocation?    @map("related_location")
   movementDate    DateTime          @map("movement_date") @db.Date
   notes           String?
   enteredByUserId String            @map("entered_by_user_id") @db.Uuid
@@ -245,6 +252,7 @@ model StockMovement {
 
   @@index([stockItemId, location], map: "idx_stock_movements_item_location")
   @@index([movementDate(sort: Desc)], map: "idx_stock_movements_date")
+  @@index([transferId], map: "idx_stock_movements_transfer")
   @@map("stock_movements")
   @@schema("public")
 }

@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Prisma, StockLocation } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { STOCK_LOCATIONS } from './stock-location.util';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
+import { CreateStockTransferDto } from './dto/create-stock-transfer.dto';
 import { QueryStockItemsDto } from './dto/query-stock-items.dto';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
 import { UpdateStockItemDto } from './dto/update-stock-item.dto';
@@ -223,6 +225,61 @@ export class StockService {
       },
       include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
     });
+  }
+
+  // A transfer is just an `out` at the source and an `in` at the
+  // destination, created together and tagged with a shared transferId so
+  // the UI can render them as one linked action instead of two unrelated
+  // rows.
+  async createTransfer(dto: CreateStockTransferDto, userId: string) {
+    if (dto.fromLocation === dto.toLocation) {
+      throw new BadRequestException('Pick two different locations to transfer between.');
+    }
+
+    const item = await this.prisma.stockItem.findUnique({ where: { id: dto.stockItemId } });
+    if (!item) throw new NotFoundException(`Stock item ${dto.stockItemId} not found`);
+
+    const current = await this.quantityFor(dto.stockItemId, dto.fromLocation);
+    if (dto.quantity > current) {
+      throw new BadRequestException(`Only ${current} ${item.unit} of "${item.name}" in stock at this location -- can't transfer ${dto.quantity}.`);
+    }
+
+    const transferId = randomUUID();
+    const movementDate = new Date(dto.movementDate);
+    const [outMovement] = await this.prisma.$transaction([
+      this.prisma.stockMovement.create({
+        data: {
+          stockItemId: dto.stockItemId,
+          location: dto.fromLocation,
+          relatedLocation: dto.toLocation,
+          type: 'out',
+          quantity: dto.quantity,
+          movementDate,
+          reason: 'Transfer',
+          notes: dto.notes,
+          transferId,
+          enteredByUserId: userId,
+        },
+        include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+      }),
+      this.prisma.stockMovement.create({
+        data: {
+          stockItemId: dto.stockItemId,
+          location: dto.toLocation,
+          relatedLocation: dto.fromLocation,
+          type: 'in',
+          quantity: dto.quantity,
+          movementDate,
+          reason: 'Transfer',
+          notes: dto.notes,
+          transferId,
+          enteredByUserId: userId,
+        },
+        include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+      }),
+    ]);
+
+    return outMovement;
   }
 
   async updateMovement(id: string, dto: UpdateStockMovementDto, userId: string) {
