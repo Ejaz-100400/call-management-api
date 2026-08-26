@@ -31,13 +31,14 @@ export class CustomersService {
     const where: Prisma.CustomerWhereInput = {
       ...(query.phone && { phoneNumber: { contains: query.phone } }),
       ...(query.search && { name: { contains: query.search, mode: 'insensitive' } }),
+      ...(query.bookmarked !== undefined && { bookmarked: query.bookmarked }),
       ...(Object.keys(callFilter).length > 0 && { calls: { some: callFilter } }),
     };
 
     const [rows, total] = await Promise.all([
       this.prisma.customer.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: query.bookmarked ? { bookmarkedAt: 'desc' } : { createdAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -82,6 +83,18 @@ export class CustomersService {
   async update(id: string, dto: UpdateCustomerDto) {
     await this.findOne(id);
     return this.prisma.customer.update({ where: { id }, data: dto });
+  }
+
+  // Deliberately its own endpoint rather than folded into update() -- a
+  // bookmark is a lightweight personal/team flag anyone signed in should be
+  // able to toggle while reviewing calls, unlike the admin-only name/notes
+  // edit.
+  async toggleBookmark(id: string, bookmarked: boolean) {
+    await this.findOne(id);
+    return this.prisma.customer.update({
+      where: { id },
+      data: { bookmarked, bookmarkedAt: bookmarked ? new Date() : null },
+    });
   }
 
   /**

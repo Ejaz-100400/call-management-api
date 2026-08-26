@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { ToArray } from '../../common/array-query.util';
 
 export class QueryCustomersDto {
@@ -10,6 +10,11 @@ export class QueryCustomersDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  bookmarked?: boolean;
 
   @IsOptional()
   @ToArray()

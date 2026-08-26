@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { BookmarkCustomerDto } from './dto/bookmark-customer.dto';
 import { BulkDeleteCustomersDto } from './dto/bulk-delete-customers.dto';
 import { CustomersService } from './customers.service';
 import { QueryCustomersDto } from './dto/query-customers.dto';
@@ -35,6 +36,11 @@ export class CustomersController {
   @Roles('admin')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto) {
     return this.customersService.update(id, dto);
+  }
+
+  @Patch(':id/bookmark')
+  bookmark(@Param('id', ParseUUIDPipe) id: string, @Body() dto: BookmarkCustomerDto) {
+    return this.customersService.toggleBookmark(id, dto.bookmarked);
   }
 
   @Post('duplicates/:id/merge')

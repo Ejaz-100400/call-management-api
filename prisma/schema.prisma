@@ -92,6 +92,13 @@ model Customer {
   carModel    String?  @map("car_model")
   carVariant  String?  @map("car_variant")
   location    String?
+  // A lightweight personal/team flag for "keep an eye on this one" --
+  // deliberately separate from FollowUp's own status workflow (pending/
+  // completed/missed), since that's a structured task tied to a specific
+  // call, while a bookmark is just "this customer matters" with no status
+  // to manage. Any signed-in user can toggle it (see the controller).
+  bookmarked   Boolean   @default(false)
+  bookmarkedAt DateTime? @map("bookmarked_at") @db.Timestamptz(6)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
   calls       Call[]
