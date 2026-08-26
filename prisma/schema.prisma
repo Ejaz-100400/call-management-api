@@ -28,6 +28,7 @@ model User {
   importedCalls     Call[]           @relation("ImportedBy")
   enteredSales      Sale[]
   enteredEnquiries  InPersonEnquiry[]
+  stockMovements    StockMovement[]
   users             users            @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("users")
@@ -199,6 +200,50 @@ model InPersonEnquiry {
   @@index([customerId], map: "idx_enquiries_customer")
   @@index([branch], map: "idx_enquiries_branch")
   @@map("in_person_enquiries")
+  @@schema("public")
+}
+
+// A trackable inventory item -- category mirrors Product's (car glasses /
+// car modifications) since that's the taxonomy the business already
+// thinks in, but this is a separate list from the customer-facing Product
+// catalog since not every product needs stock tracking (e.g. a service
+// like Doom cleaning) and stock items are meant to be added incrementally
+// rather than derived from the catalog.
+model StockItem {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  category         BusinessCategory
+  unit             String          @default("pcs")
+  reorderThreshold Int             @default(0) @map("reorder_threshold")
+  active           Boolean         @default(true)
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  movements        StockMovement[]
+
+  @@map("stock_items")
+  @@schema("public")
+}
+
+// Current on-hand quantity per item/branch is never stored directly --
+// it's always the sum of `in` movements minus `out` movements, so the
+// movement log is the single source of truth (same reasoning as a ledger)
+// and there's nothing to keep in sync or drift out of date.
+model StockMovement {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stockItemId     String            @map("stock_item_id") @db.Uuid
+  branch          Branch
+  type            StockMovementType
+  quantity        Int
+  reason          String?
+  movementDate    DateTime          @map("movement_date") @db.Date
+  notes           String?
+  enteredByUserId String            @map("entered_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  stockItem       StockItem         @relation(fields: [stockItemId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  enteredBy       User              @relation(fields: [enteredByUserId], references: [id], onUpdate: NoAction)
+
+  @@index([stockItemId, branch], map: "idx_stock_movements_item_branch")
+  @@index([movementDate(sort: Desc)], map: "idx_stock_movements_date")
+  @@map("stock_movements")
   @@schema("public")
 }
 
@@ -860,6 +905,14 @@ enum EnquiryOutcome {
   undecided
 
   @@map("enquiry_outcome")
+  @@schema("public")
+}
+
+enum StockMovementType {
+  in
+  out
+
+  @@map("stock_movement_type")
   @@schema("public")
 }
 

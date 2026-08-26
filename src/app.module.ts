@@ -16,6 +16,7 @@ import { ProductsModule } from './products/products.module';
 import { QueueModule } from './queue/queue.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
+import { StockModule } from './stock/stock.module';
 import { TeamModule } from './team/team.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
@@ -38,6 +39,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
     CoverageModule,
     SalesModule,
     EnquiriesModule,
+    StockModule,
     TeamModule,
     WebhooksModule,
     WhatsappModule,
