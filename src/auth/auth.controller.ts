@@ -1,8 +1,9 @@
-import { Controller, Delete, Get, Logger, Param, ParseUUIDPipe, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Logger, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import { User } from '@prisma/client';
 import type { Request } from 'express';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { OwnerOnly } from './decorators/owner-only.decorator';
+import { UpdateLocationDto } from './dto/update-location.dto';
 import { LoginTrackingService } from './login-tracking.service';
 
 const logger = new Logger('AuthController');
@@ -23,6 +24,18 @@ export class AuthController {
       logger.error(`Login tracking failed: ${(err as Error).message}`);
     }
     return user;
+  }
+
+  @Post('location')
+  async updateLocation(@CurrentUser() user: User, @Req() req: Request, @Body() dto: UpdateLocationDto) {
+    // Fire-and-forget from the frontend's side; failures here are logged,
+    // not surfaced -- losing a GPS refinement should never look like an error.
+    try {
+      await this.loginTracking.updateBrowserLocation(user, req, dto.lat, dto.lng);
+    } catch (err) {
+      logger.error(`Browser location update failed: ${(err as Error).message}`);
+    }
+    return { updated: true };
   }
 
   @Get('devices')

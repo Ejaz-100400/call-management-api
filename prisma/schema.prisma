@@ -55,6 +55,13 @@ model UserDevice {
   city        String?
   region      String?
   country     String?
+  // Set only when the browser granted the Geolocation permission -- far more
+  // accurate than the IP lookup above, which a VPN/Cloudflare WARP can push
+  // hundreds of miles off. locationSource records which one city/region/
+  // country actually came from, so the UI can label accordingly.
+  lat            Float?
+  lng            Float?
+  locationSource String?  @map("location_source")
   firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
   lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
   loginCount  Int      @default(1) @map("login_count")
