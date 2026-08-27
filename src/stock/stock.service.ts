@@ -179,6 +179,28 @@ export class StockService {
     }
 
     const item = await this.prisma.stockItem.update({ where: { id }, data });
+
+    // The one deliberate exception to "editing never logs a movement" --
+    // see the comment on UpdateStockItemDto.addStock. Deliberately bypasses
+    // createMovement's warehouse-blocks-"in" guard: that guard exists to
+    // keep Movements focused on outbound tracking at the Warehouse, but
+    // this screen is the sanctioned place to add Warehouse stock (the
+    // guard's own error message says so), and without it a Warehouse item
+    // could never be restocked once created.
+    if (dto.addStock && dto.addStock.quantity > 0) {
+      await this.prisma.stockMovement.create({
+        data: {
+          stockItemId: id,
+          location: dto.addStock.location,
+          type: 'in',
+          quantity: dto.addStock.quantity,
+          movementDate: new Date(),
+          reason: 'Restock',
+          enteredByUserId: userId,
+        },
+      });
+    }
+
     await this.prisma.auditLog.create({
       data: { userId, action: 'update_stock_item', entity: 'stock_items', entityId: id, details: dto as Prisma.InputJsonValue },
     });
