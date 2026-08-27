@@ -110,4 +110,43 @@ export class FollowUpsService {
       },
     });
   }
+
+  // Deletes the follow-up task itself, not the underlying call -- for
+  // wrongly-generated or duplicate follow-ups, as opposed to marking one
+  // completed/missed (which is what closing out real work should use).
+  async remove(id: string, deletedById: string) {
+    const existing = await this.prisma.followUp.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Follow-up ${id} not found`);
+
+    await this.prisma.followUp.delete({ where: { id } });
+    await this.prisma.auditLog.create({
+      data: { userId: deletedById, action: 'delete_follow_up', entity: 'follow_ups', entityId: id, details: { dueDate: existing.dueDate.toISOString() } },
+    });
+
+    return { deleted: true };
+  }
+
+  /**
+   * Bulk counterpart to remove() -- silently ignores any ids that don't
+   * exist, same as the calls module's bulk delete.
+   */
+  async removeMany(ids: string[], deletedById: string) {
+    const followUps = await this.prisma.followUp.findMany({ where: { id: { in: ids } }, select: { id: true, dueDate: true } });
+    if (followUps.length === 0) return { deleted: 0 };
+
+    await this.prisma.$transaction([
+      this.prisma.followUp.deleteMany({ where: { id: { in: followUps.map((f) => f.id) } } }),
+      this.prisma.auditLog.createMany({
+        data: followUps.map((f) => ({
+          userId: deletedById,
+          action: 'delete_follow_up',
+          entity: 'follow_ups',
+          entityId: f.id,
+          details: { dueDate: f.dueDate.toISOString() },
+        })),
+      }),
+    ]);
+
+    return { deleted: followUps.length };
+  }
 }

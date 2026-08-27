@@ -1,5 +1,8 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { User } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { BulkDeleteFollowUpsDto } from './dto/bulk-delete-follow-ups.dto';
 import { FollowUpsService } from './follow-ups.service';
 import { QueryFollowUpsDto } from './dto/query-follow-ups.dto';
 import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
@@ -22,5 +25,17 @@ export class FollowUpsController {
   @Roles('admin', 'manager')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateFollowUpDto) {
     return this.followUpsService.update(id, dto);
+  }
+
+  @Delete(':id')
+  @Roles('admin')
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: User) {
+    return this.followUpsService.remove(id, user.id);
+  }
+
+  @Post('bulk-delete')
+  @Roles('admin')
+  removeMany(@Body() dto: BulkDeleteFollowUpsDto, @CurrentUser() user: User) {
+    return this.followUpsService.removeMany(dto.ids, user.id);
   }
 }
