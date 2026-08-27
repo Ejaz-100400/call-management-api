@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { Prisma, StockLocation } from '@prisma/client';
+import { BusinessCategory, Prisma, StockLocation } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { STOCK_LOCATIONS } from './stock-location.util';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
@@ -13,6 +13,15 @@ import { UpdateStockItemDto } from './dto/update-stock-item.dto';
 import { UpdateStockMovementDto } from './dto/update-stock-movement.dto';
 
 const ALL_LOCATIONS = STOCK_LOCATIONS as unknown as StockLocation[];
+
+// Case/whitespace-insensitive so "ADA Fog", "ada fog", and "ADA  Fog" (an
+// extra internal space) all collide -- exactly the kind of near-duplicate
+// that created 6 split-by-branch catalog entries for the same product
+// before this check existed (see the one-time merge script that fixed the
+// existing data).
+function normalizeItemName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
 
 @Injectable()
 export class StockService {
@@ -79,8 +88,25 @@ export class StockService {
     if (!product) throw new NotFoundException(`Product ${productId} not found`);
   }
 
+  // Catches the exact mistake that produced the original duplicate data:
+  // adding a starting-stock entry for a product at a new branch by creating
+  // a whole new catalog item instead of logging a "stock in" against the
+  // one that already exists. Same-name-different-category is still allowed
+  // (rare, but not actually a duplicate).
+  private async assertNoDuplicateName(name: string, category: BusinessCategory, excludeId?: string) {
+    const candidates = await this.prisma.stockItem.findMany({ where: { category, ...(excludeId && { id: { not: excludeId } }) } });
+    const target = normalizeItemName(name);
+    const clash = candidates.find((c) => normalizeItemName(c.name) === target);
+    if (clash) {
+      throw new ConflictException(
+        `"${clash.name}" already exists in your catalog. To add stock for it at a new branch, use Stock Movements -> Stock in instead of creating another item with the same name.`,
+      );
+    }
+  }
+
   async createItem(dto: CreateStockItemDto, userId: string) {
     await this.assertProductExists(dto.productId);
+    await this.assertNoDuplicateName(dto.name, dto.category);
 
     const item = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stockItem.create({
@@ -122,6 +148,12 @@ export class StockService {
     if (!existing) throw new NotFoundException(`Stock item ${id} not found`);
 
     if (dto.productId !== undefined) await this.assertProductExists(dto.productId);
+
+    const effectiveName = dto.name ?? existing.name;
+    const effectiveCategory = dto.category ?? existing.category;
+    if (normalizeItemName(effectiveName) !== normalizeItemName(existing.name) || effectiveCategory !== existing.category) {
+      await this.assertNoDuplicateName(effectiveName, effectiveCategory, id);
+    }
 
     const data: Prisma.StockItemUpdateInput = {
       name: dto.name,
