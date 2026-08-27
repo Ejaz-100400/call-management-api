@@ -266,6 +266,18 @@ model StockItem {
   // enforced at the schema level since nothing stops naming a branch item
   // too if that ever becomes useful.
   boxNumber        String?         @map("box_number")
+  // Cost/purchase price -- purely for internal tracking, never shown to
+  // customers. Decimal (not Float) for the same reason as CallExtraction's
+  // budget field: exact money values, no floating-point drift.
+  price            Decimal?        @db.Decimal(12, 2)
+  // Free-form key/value spec fields that only apply to certain product
+  // types (e.g. LED: watts/temperature/version; 5D Ring: colorType/size/
+  // shape) -- a JSON blob rather than dedicated columns since which
+  // attributes matter depends on the product, and new types will keep
+  // adding new ones. Which fields to show for which product is a frontend
+  // concern (apps/web/src/lib/stock-variant-fields.ts) -- the API stores
+  // whatever key/value pairs it's given without interpreting them.
+  attributes       Json?
   createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
   product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   movements        StockMovement[]

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, IsUUID, Min, ValidateNested } from 'class-validator';
 import { STOCK_LOCATIONS, StockLocationValue } from '../stock-location.util';
 
 class InitialStockEntryDto {
@@ -43,6 +43,21 @@ export class CreateStockItemDto {
   @IsOptional()
   @IsString()
   boxNumber?: string;
+
+  // Cost/purchase price -- internal tracking only. Nullable (not just
+  // optional) so an edit can explicitly clear a previously-set price, same
+  // "the frontend always sends this field" pattern as boxNumber.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number | null;
+
+  // Free-form spec fields whose relevance depends on the product type (e.g.
+  // LED: watts/temperature/version) -- which fields apply is decided by the
+  // frontend, not validated here beyond "it's an object".
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, string>;
 
   @IsOptional()
   @IsArray()

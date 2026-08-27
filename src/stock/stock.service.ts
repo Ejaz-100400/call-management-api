@@ -118,6 +118,8 @@ export class StockService {
           reorderThreshold: dto.reorderThreshold ?? 0,
           active: dto.active ?? true,
           boxNumber: dto.boxNumber?.trim() || null,
+          price: dto.price ?? null,
+          attributes: dto.attributes ?? Prisma.JsonNull,
         },
       });
       const initialEntries = (dto.initialStock ?? []).filter((e) => e.quantity > 0);
@@ -165,6 +167,12 @@ export class StockService {
       // empty string here means "clear it" -- undefined (key omitted
       // entirely, e.g. a non-frontend caller) means "leave it alone".
       boxNumber: dto.boxNumber !== undefined ? dto.boxNumber.trim() || null : undefined,
+      // price: frontend always sends this too, using explicit null to clear.
+      price: dto.price,
+      // attributes: same "frontend always sends it" pattern -- an empty
+      // object clears any previously-set spec fields (e.g. the item's
+      // subcategory changed away from LED).
+      attributes: dto.attributes,
     };
     if (dto.productId !== undefined) {
       data.product = dto.productId ? { connect: { id: dto.productId } } : { disconnect: true };
