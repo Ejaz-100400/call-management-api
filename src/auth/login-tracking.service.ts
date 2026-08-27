@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { User } from '@prisma/client';
 import type { Request } from 'express';
 import geoip from 'geoip-lite';
@@ -89,5 +89,25 @@ export class LoginTrackingService {
       { userName: user.name, userEmail: user.email, deviceLabel, ipAddress: ip, location, loginAt: new Date() },
       recipients,
     ).catch((err) => logger.error(`Failed to send new-device email: ${err.message}`));
+  }
+
+  /** Every device ever seen, across every account -- owner-only (see OwnerOnly). */
+  async findAllDevices() {
+    return this.prisma.userDevice.findMany({
+      include: { user: { select: { id: true, name: true, email: true, role: true } } },
+      orderBy: { lastSeenAt: 'desc' },
+    });
+  }
+
+  /**
+   * "Forget" a device -- deletes its row so the next login from that
+   * browser+OS+type combo looks new again and re-triggers an email. Doesn't
+   * affect the user's actual session/access; it's only a tracking reset.
+   */
+  async deleteDevice(id: string) {
+    const device = await this.prisma.userDevice.findUnique({ where: { id } });
+    if (!device) throw new NotFoundException(`Device ${id} not found`);
+    await this.prisma.userDevice.delete({ where: { id } });
+    return { deleted: true };
   }
 }

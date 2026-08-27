@@ -1,7 +1,8 @@
-import { Controller, Get, Logger, Req } from '@nestjs/common';
+import { Controller, Delete, Get, Logger, Param, ParseUUIDPipe, Req } from '@nestjs/common';
 import { User } from '@prisma/client';
 import type { Request } from 'express';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { OwnerOnly } from './decorators/owner-only.decorator';
 import { LoginTrackingService } from './login-tracking.service';
 
 const logger = new Logger('AuthController');
@@ -22,5 +23,17 @@ export class AuthController {
       logger.error(`Login tracking failed: ${(err as Error).message}`);
     }
     return user;
+  }
+
+  @Get('devices')
+  @OwnerOnly()
+  findAllDevices() {
+    return this.loginTracking.findAllDevices();
+  }
+
+  @Delete('devices/:id')
+  @OwnerOnly()
+  deleteDevice(@Param('id', ParseUUIDPipe) id: string) {
+    return this.loginTracking.deleteDevice(id);
   }
 }

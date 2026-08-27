@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OWNER_ONLY_KEY } from '../decorators/owner-only.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { SupabaseJwtPayload } from './supabase-auth.guard';
@@ -42,6 +43,14 @@ export class RolesGuard implements CanActivate {
     }
 
     request.appUser = appUser;
+
+    const ownerOnly = this.reflector.getAllAndOverride<boolean>(OWNER_ONLY_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (ownerOnly && !appUser.isOwner) {
+      throw new ForbiddenException('This page is restricted to the account owner');
+    }
 
     if (!requiredRoles || requiredRoles.length === 0) {
       return true; // route just requires an authenticated, active user
