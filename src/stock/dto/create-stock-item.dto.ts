@@ -38,6 +38,12 @@ export class CreateStockItemDto {
   @IsBoolean()
   active?: boolean;
 
+  // Which box this item lives in at the Warehouse -- free text since boxes
+  // aren't a separate catalog (e.g. "Box 5" or "B12").
+  @IsOptional()
+  @IsString()
+  boxNumber?: string;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })

@@ -4,6 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
+import { CreateStockSwapDto } from './dto/create-stock-swap.dto';
 import { CreateStockTransferDto } from './dto/create-stock-transfer.dto';
 import { QueryStockItemsDto } from './dto/query-stock-items.dto';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
@@ -59,6 +60,12 @@ export class StockController {
   @Roles('admin', 'manager')
   createTransfer(@Body() dto: CreateStockTransferDto, @CurrentUser() user: User) {
     return this.stockService.createTransfer(dto, user.id);
+  }
+
+  @Post('movements/swap')
+  @Roles('admin', 'manager')
+  createSwap(@Body() dto: CreateStockSwapDto, @CurrentUser() user: User) {
+    return this.stockService.createSwap(dto, user.id);
   }
 
   @Patch('movements/:id')

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { STOCK_LOCATIONS } from './stock-location.util';
 import { CreateStockItemDto } from './dto/create-stock-item.dto';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
+import { CreateStockSwapDto } from './dto/create-stock-swap.dto';
 import { CreateStockTransferDto } from './dto/create-stock-transfer.dto';
 import { QueryStockItemsDto } from './dto/query-stock-items.dto';
 import { QueryStockMovementsDto } from './dto/query-stock-movements.dto';
@@ -90,6 +91,7 @@ export class StockService {
           unit: dto.unit || 'pcs',
           reorderThreshold: dto.reorderThreshold ?? 0,
           active: dto.active ?? true,
+          boxNumber: dto.boxNumber?.trim() || null,
         },
       });
       const initialEntries = (dto.initialStock ?? []).filter((e) => e.quantity > 0);
@@ -127,6 +129,10 @@ export class StockService {
       unit: dto.unit,
       reorderThreshold: dto.reorderThreshold,
       active: dto.active,
+      // Frontend always sends this field (even "") when editing, so an
+      // empty string here means "clear it" -- undefined (key omitted
+      // entirely, e.g. a non-frontend caller) means "leave it alone".
+      boxNumber: dto.boxNumber !== undefined ? dto.boxNumber.trim() || null : undefined,
     };
     if (dto.productId !== undefined) {
       data.product = dto.productId ? { connect: { id: dto.productId } } : { disconnect: true };
@@ -182,7 +188,11 @@ export class StockService {
     const [items, total] = await Promise.all([
       this.prisma.stockMovement.findMany({
         where,
-        include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+        include: {
+          stockItem: { select: { id: true, name: true, category: true, unit: true } },
+          relatedStockItem: { select: { id: true, name: true, category: true, unit: true } },
+          enteredBy: { select: { name: true } },
+        },
         orderBy: [{ movementDate: 'desc' }, { createdAt: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -223,7 +233,11 @@ export class StockService {
         notes: dto.notes,
         enteredByUserId: userId,
       },
-      include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+      include: {
+          stockItem: { select: { id: true, name: true, category: true, unit: true } },
+          relatedStockItem: { select: { id: true, name: true, category: true, unit: true } },
+          enteredBy: { select: { name: true } },
+        },
     });
   }
 
@@ -260,7 +274,11 @@ export class StockService {
           transferId,
           enteredByUserId: userId,
         },
-        include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+        include: {
+          stockItem: { select: { id: true, name: true, category: true, unit: true } },
+          relatedStockItem: { select: { id: true, name: true, category: true, unit: true } },
+          enteredBy: { select: { name: true } },
+        },
       }),
       this.prisma.stockMovement.create({
         data: {
@@ -275,7 +293,77 @@ export class StockService {
           transferId,
           enteredByUserId: userId,
         },
-        include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+        include: {
+          stockItem: { select: { id: true, name: true, category: true, unit: true } },
+          relatedStockItem: { select: { id: true, name: true, category: true, unit: true } },
+          enteredBy: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    return outMovement;
+  }
+
+  // A swap is the mirror of a transfer -- same location, two *different*
+  // stock items instead of two locations. The old product comes back `in`
+  // (it's no longer installed), the new one goes `out` (it's replacing it),
+  // tagged with a shared swapId and cross-linked via relatedStockItemId so
+  // the UI can render "Swapped for LED 140W" without parsing free text.
+  async createSwap(dto: CreateStockSwapDto, userId: string) {
+    if (dto.oldStockItemId === dto.newStockItemId) {
+      throw new BadRequestException('Pick two different products to swap between.');
+    }
+
+    const [oldItem, newItem] = await Promise.all([
+      this.prisma.stockItem.findUnique({ where: { id: dto.oldStockItemId } }),
+      this.prisma.stockItem.findUnique({ where: { id: dto.newStockItemId } }),
+    ]);
+    if (!oldItem) throw new NotFoundException(`Stock item ${dto.oldStockItemId} not found`);
+    if (!newItem) throw new NotFoundException(`Stock item ${dto.newStockItemId} not found`);
+
+    const currentNew = await this.quantityFor(dto.newStockItemId, dto.location);
+    if (dto.quantity > currentNew) {
+      throw new BadRequestException(`Only ${currentNew} ${newItem.unit} of "${newItem.name}" in stock at this location -- can't swap in ${dto.quantity}.`);
+    }
+
+    const swapId = randomUUID();
+    const movementDate = new Date(dto.movementDate);
+    const movementInclude = {
+      stockItem: { select: { id: true, name: true, category: true, unit: true } },
+      relatedStockItem: { select: { id: true, name: true, category: true, unit: true } },
+      enteredBy: { select: { name: true } },
+    };
+
+    const [outMovement] = await this.prisma.$transaction([
+      this.prisma.stockMovement.create({
+        data: {
+          stockItemId: dto.newStockItemId,
+          relatedStockItemId: dto.oldStockItemId,
+          location: dto.location,
+          type: 'out',
+          quantity: dto.quantity,
+          movementDate,
+          reason: 'Swap -- installed',
+          notes: dto.notes,
+          swapId,
+          enteredByUserId: userId,
+        },
+        include: movementInclude,
+      }),
+      this.prisma.stockMovement.create({
+        data: {
+          stockItemId: dto.oldStockItemId,
+          relatedStockItemId: dto.newStockItemId,
+          location: dto.location,
+          type: 'in',
+          quantity: dto.quantity,
+          movementDate,
+          reason: 'Swap -- returned',
+          notes: dto.notes,
+          swapId,
+          enteredByUserId: userId,
+        },
+        include: movementInclude,
       }),
     ]);
 
@@ -308,7 +396,11 @@ export class StockService {
         reason: dto.reason,
         notes: dto.notes,
       },
-      include: { stockItem: { select: { id: true, name: true, category: true, unit: true } }, enteredBy: { select: { name: true } } },
+      include: {
+          stockItem: { select: { id: true, name: true, category: true, unit: true } },
+          relatedStockItem: { select: { id: true, name: true, category: true, unit: true } },
+          enteredBy: { select: { name: true } },
+        },
     });
     await this.prisma.auditLog.create({
       data: { userId, action: 'update_stock_movement', entity: 'stock_movements', entityId: id, details: dto as Prisma.InputJsonValue },
