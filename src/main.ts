@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { json, urlencoded, type Request } from 'express';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -10,7 +11,13 @@ async function bootstrap() {
   // request was failing silently on large imports (see Import.tsx's
   // swallowed .catch on recordHistory), leaving no audit log entry for the
   // import even though the calls themselves were saved fine.
-  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  // Render (and most PaaS hosts) put this app behind a reverse proxy --
+  // without trust proxy, req.ip is the proxy's own internal address for
+  // every request, not the real visitor. This makes Express read the
+  // client's real IP from X-Forwarded-For instead (used for login-device
+  // geolocation; see LoginTrackingService).
+  app.set('trust proxy', 1);
   // Captures the raw request body alongside express's usual JSON parsing --
   // needed to verify Meta's X-Hub-Signature-256 header on the WhatsApp
   // webhook, which is an HMAC over the exact raw bytes Meta sent (the

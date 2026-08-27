@@ -30,17 +30,20 @@
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
+    "geoip-lite": "^2.0.3",
     "ioredis": "^5.4.1",
     "jose": "^5.9.6",
     "puppeteer": "^23.5.0",
     "puppeteer-core": "^25.8.0",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.20.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "ua-parser-js": "^2.0.10"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.5",
     "@types/express": "^4.17.21",
+    "@types/geoip-lite": "^1.4.4",
     "@types/multer": "^2.2.0",
     "@types/node": "^20.14.0",
     "prisma": "^5.20.0",

@@ -29,9 +29,39 @@ model User {
   enteredSales      Sale[]
   enteredEnquiries  InPersonEnquiry[]
   stockMovements    StockMovement[]
+  devices           UserDevice[]
   users             users            @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@map("users")
+  @@schema("public")
+}
+
+// One row per (user, browser+OS+device-type combination) actually seen at
+// login -- not per physical device (a web app can't tell two identical
+// Windows/Chrome laptops apart), and not per session/request. Recorded once
+// per fresh sign-in (see AuthController.me()), which is what makes the
+// fingerprint meaningful: a page refresh or token auto-refresh doesn't
+// create a new row, only an actual new sign-in does. New fingerprint for a
+// user -> "new device" email; an existing one just updates lastSeenAt.
+model UserDevice {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  fingerprint String
+  deviceLabel String   @map("device_label")
+  deviceType  String   @map("device_type")
+  browser     String?
+  os          String?
+  ipAddress   String?  @map("ip_address")
+  city        String?
+  region      String?
+  country     String?
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  loginCount  Int      @default(1) @map("login_count")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userId, fingerprint])
+  @@map("user_devices")
   @@schema("public")
 }
 
