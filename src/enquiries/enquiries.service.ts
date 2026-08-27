@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEnquiryDto } from './dto/create-enquiry.dto';
 import { QueryEnquiriesDto } from './dto/query-enquiries.dto';
+import { UpdateEnquiryDto } from './dto/update-enquiry.dto';
 
 @Injectable()
 export class EnquiriesService {
@@ -70,6 +71,43 @@ export class EnquiriesService {
         enteredByUserId: userId,
       },
       include: { customer: true, employee: true },
+    });
+  }
+
+  async update(id: string, dto: UpdateEnquiryDto) {
+    const existing = await this.prisma.inPersonEnquiry.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Enquiry ${id} not found`);
+
+    // Only re-link the Customer when the phone actually changed.
+    let customerId: string | null | undefined;
+    if (dto.customerPhone !== undefined && dto.customerPhone !== existing.customerPhone) {
+      if (dto.customerPhone) {
+        const customer = await this.prisma.customer.upsert({
+          where: { phoneNumber: dto.customerPhone },
+          create: { phoneNumber: dto.customerPhone },
+          update: {},
+        });
+        customerId = customer.id;
+      } else {
+        customerId = null;
+      }
+    }
+
+    return this.prisma.inPersonEnquiry.update({
+      where: { id },
+      data: {
+        customerPhone: dto.customerPhone,
+        customerId,
+        customerName: dto.customerName,
+        carMake: dto.carMake,
+        carModel: dto.carModel,
+        branch: dto.branch,
+        enquiryDate: dto.enquiryDate ? new Date(dto.enquiryDate) : undefined,
+        outcome: dto.outcome,
+        notes: dto.notes,
+        employeeId: dto.employeeId,
+      },
+      include: { customer: true, employee: true, enteredBy: { select: { name: true } } },
     });
   }
 }

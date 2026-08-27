@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Branch, Prisma } from '@prisma/client';
 import { endOfDayIST, istMinuteOfDay, startOfDayIST, todayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { QuerySalesDto } from './dto/query-sales.dto';
+import { UpdateSaleDto } from './dto/update-sale.dto';
 
 const ALL_BRANCHES: Branch[] = ['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'];
 // 20:30 IST, expressed in minutes since IST midnight -- see istMinuteOfDay.
@@ -100,6 +101,39 @@ export class SalesService {
         enteredByUserId: userId,
       },
       include: { customer: true, matchedCall: true },
+    });
+  }
+
+  async update(id: string, dto: UpdateSaleDto) {
+    const existing = await this.prisma.sale.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException(`Sale ${id} not found`);
+
+    // Only re-link the Customer when the phone actually changed -- an
+    // unrelated field edit (branch, source, notes) shouldn't touch it.
+    let customerId: string | undefined;
+    if (dto.customerPhone !== undefined && dto.customerPhone !== existing.customerPhone) {
+      const customer = await this.prisma.customer.upsert({
+        where: { phoneNumber: dto.customerPhone },
+        create: { phoneNumber: dto.customerPhone },
+        update: {},
+      });
+      customerId = customer.id;
+    }
+
+    return this.prisma.sale.update({
+      where: { id },
+      data: {
+        customerPhone: dto.customerPhone,
+        customerId,
+        carMake: dto.carMake,
+        carModel: dto.carModel,
+        branch: dto.branch,
+        saleDate: dto.saleDate ? new Date(dto.saleDate) : undefined,
+        source: dto.source,
+        matchedCallId: dto.matchedCallId,
+        notes: dto.notes,
+      },
+      include: { customer: true, matchedCall: true, enteredBy: { select: { name: true } } },
     });
   }
 

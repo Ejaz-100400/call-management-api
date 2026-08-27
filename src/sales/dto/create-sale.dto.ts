@@ -19,8 +19,8 @@ export class CreateSaleDto {
   saleDate: string;
 
   @IsOptional()
-  @IsIn(['call', 'whatsapp', 'walk_in', 'owner', 'unknown'])
-  source?: 'call' | 'whatsapp' | 'walk_in' | 'owner' | 'unknown';
+  @IsIn(['call', 'whatsapp', 'walk_in', 'owner', 'dastagir', 'unknown'])
+  source?: 'call' | 'whatsapp' | 'walk_in' | 'owner' | 'dastagir' | 'unknown';
 
   @IsOptional()
   @IsUUID()
