@@ -250,8 +250,19 @@ async function findProductByName(
     LIMIT 5;
   `;
   const sameCategory = candidates.find((c) => c.category === businessCategory && c.similarity >= PRODUCT_MATCH_THRESHOLD);
-  const bestOverall = candidates.find((c) => c.similarity >= PRODUCT_MATCH_THRESHOLD);
-  return sameCategory ?? bestOverall;
+  if (sameCategory) return sameCategory;
+  // Cross-category fallback only when the call's own category is genuinely
+  // unresolved -- a real, known category (car_glasses vs car_modifications)
+  // should never pull in a product from the other line just because
+  // nothing in its own category cleared the threshold (this is exactly how
+  // a bare "glass" mention on a Car Modifications call was ending up tagged
+  // with Headlight Glass, a Car Glasses-only product). 'unknown' is the one
+  // case with no real category signal to trust in the first place -- that's
+  // what the fallback below still covers, unchanged.
+  if (businessCategory === 'unknown') {
+    return candidates.find((c) => c.similarity >= PRODUCT_MATCH_THRESHOLD);
+  }
+  return undefined;
 }
 
 /**

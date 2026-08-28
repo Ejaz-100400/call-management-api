@@ -65,11 +65,12 @@ export class LoginTrackingService {
     // fingerprinting, not a bug.
     const fingerprint = deviceFingerprint(req);
 
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-
-    const existing = await this.prisma.userDevice.findUnique({
-      where: { userId_fingerprint: { userId: user.id, fingerprint } },
-    });
+    // Independent writes/reads -- run concurrently instead of round-tripping
+    // to the database twice in sequence on every single login.
+    const [, existing] = await Promise.all([
+      this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),
+      this.prisma.userDevice.findUnique({ where: { userId_fingerprint: { userId: user.id, fingerprint } } }),
+    ]);
 
     if (existing) {
       // Don't let a plain IP lookup clobber a location this device already
