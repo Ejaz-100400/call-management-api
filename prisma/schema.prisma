@@ -975,6 +975,8 @@ enum SaleSource {
   walk_in
   owner
   dastagir
+  karthik
+  referral
   unknown
 
   @@map("sale_source")
