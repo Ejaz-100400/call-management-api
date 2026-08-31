@@ -21,6 +21,11 @@ export class ReportsController {
     return this.reportsService.customersByPeriod(granularity, filters);
   }
 
+  @Get('daily-rates')
+  dailyRates(@Query() filters: QueryReportsDto) {
+    return this.reportsService.dailyRates(filters);
+  }
+
   @Get('follow-ups')
   followUps(@Query() filters: QueryReportsDto) {
     return this.reportsService.followUpBreakdown(filters);

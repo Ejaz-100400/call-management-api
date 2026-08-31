@@ -96,6 +96,21 @@ export class ReportsService {
       ...base,
       NOT: { callDate: { lt: ReportsService.IMPORT_CUTOFF }, extraction: { extractedByModel: 'manual_import' } },
     };
+    // Sales don't carry every dimension a call does (no car make/sentiment/
+    // product to filter by) -- scoped to the two fields they do share with
+    // the rest of this report, branch and date range, same as Customer
+    // Tracker's own conversion summary uses.
+    const salesWhere: Prisma.SaleWhereInput = {
+      source: 'call',
+      ...(filters.branch?.length && { branch: { in: filters.branch } }),
+      ...((filters.dateFrom || filters.dateTo) && {
+        saleDate: {
+          ...(filters.dateFrom && { gte: startOfDayIST(filters.dateFrom) }),
+          ...(filters.dateTo && { lt: endOfDayIST(filters.dateTo) }),
+        },
+      }),
+    };
+
     const [
       totalCalls,
       carGlasses,
@@ -107,6 +122,7 @@ export class ReportsService {
       sentimentCounts,
       customerCallCounts,
       followUpStatusCounts,
+      callSourcedSales,
     ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
@@ -118,11 +134,18 @@ export class ReportsService {
       this.prisma.callExtraction.groupBy({ by: ['sentiment'], where: { sentiment: { not: null }, call: base }, _count: true }),
       this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } }, _count: true }),
       this.prisma.followUp.groupBy({ by: ['status'], where: { call: followUpCallFilter }, _count: true }),
+      this.prisma.sale.count({ where: salesWhere }),
     ]);
 
     const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
     const interestedCount = sentimentCounts.find((s) => s.sentiment === 'interested')?._count ?? 0;
+    const needsFollowUpCount = sentimentCounts.find((s) => s.sentiment === 'needs_follow_up')?._count ?? 0;
     const customerCount = customerCallCounts.length;
+    // Denominator is calls the AI read as genuinely worth following up on
+    // (interested or needs_follow_up) -- a "not_interested" call was never
+    // a real conversion opportunity, so counting it would understate the
+    // real rate. Same reasoning as Customer Tracker's own callToSaleRate.
+    const conversionOpportunityCount = interestedCount + needsFollowUpCount;
     // A "returning" customer is one with more than one call within this
     // filtered set -- narrowing the filters (e.g. to a date range) narrows
     // this count right along with it, same as every other tile here.
@@ -150,6 +173,10 @@ export class ReportsService {
         durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
       interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
       followUpCompletionRate: followUpTotal > 0 ? Math.round((followUpCompletedCount / followUpTotal) * 100) : null,
+      // % of "worth following up on" calls that turned into a call-sourced
+      // sale (Sale.source = 'call') -- scoped to this report's branch/date
+      // filters (see salesWhere above for why not every filter applies).
+      callToSaleRate: conversionOpportunityCount > 0 ? Math.round((callSourcedSales / conversionOpportunityCount) * 100) : null,
       totalCustomers: customerCount,
       returningCustomers: returningCustomerCount,
     };
@@ -193,6 +220,70 @@ export class ReportsService {
 
     return Array.from(byPeriod.values())
       .sort((a, b) => b.period.getTime() - a.period.getTime())
+      .slice(0, 90);
+  }
+
+  /**
+   * Same three rates as summary() (interestedRate, callToSaleRate,
+   * followUpCompletionRate), broken out per day -- powers the Calendar
+   * tab's rate-based view. Conversion is judged per *call* here (does this
+   * call have a matching sale via matchedCallId?) rather than per sale's
+   * own saleDate like summary() does -- a sale can get recorded days after
+   * the call that led to it, and attributing it to the call's own day is
+   * the more meaningful reading for a day-by-day calendar.
+   */
+  async dailyRates(filters: QueryReportsDto = {}) {
+    const conditions = this.buildCallConditions(filters, 'calls', 'ce');
+    const whereSql = conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
+    // Same "exclude imported historical follow-up data" rule summary() applies.
+    const notImportExcluded = Prisma.sql`NOT (calls.call_date < ${ReportsService.IMPORT_CUTOFF} AND ce.extracted_by_model = 'manual_import')`;
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        period: Date;
+        sentiment_total: bigint;
+        interested_count: bigint;
+        opportunity_count: bigint;
+        converted_count: bigint;
+        fu_total: bigint;
+        fu_completed: bigint;
+      }>
+    >(Prisma.sql`
+      SELECT
+        date_trunc('day', calls.call_date) AS period,
+        COUNT(*) FILTER (WHERE ce.sentiment IS NOT NULL) AS sentiment_total,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'interested') AS interested_count,
+        COUNT(*) FILTER (WHERE ce.sentiment IN ('interested', 'needs_follow_up')) AS opportunity_count,
+        COUNT(*) FILTER (
+          WHERE ce.sentiment IN ('interested', 'needs_follow_up')
+          AND EXISTS (SELECT 1 FROM sales s WHERE s.matched_call_id = calls.id)
+        ) AS converted_count,
+        COUNT(*) FILTER (WHERE fu.id IS NOT NULL AND ${notImportExcluded}) AS fu_total,
+        COUNT(*) FILTER (WHERE fu.status = 'completed' AND ${notImportExcluded}) AS fu_completed
+      FROM calls
+      LEFT JOIN call_extractions ce ON ce.call_id = calls.id
+      LEFT JOIN follow_ups fu ON fu.call_id = calls.id
+      ${whereSql}
+      GROUP BY period
+      ORDER BY period DESC;
+    `);
+
+    return rows
+      .map((r) => {
+        const sentimentTotal = Number(r.sentiment_total);
+        const interestedCount = Number(r.interested_count);
+        const opportunityCount = Number(r.opportunity_count);
+        const convertedCount = Number(r.converted_count);
+        const fuTotal = Number(r.fu_total);
+        const fuCompleted = Number(r.fu_completed);
+        return {
+          period: r.period.toISOString(),
+          interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
+          callToSaleRate: opportunityCount > 0 ? Math.round((convertedCount / opportunityCount) * 100) : null,
+          followUpCompletionRate: fuTotal > 0 ? Math.round((fuCompleted / fuTotal) * 100) : null,
+        };
+      })
+      .sort((a, b) => (a.period < b.period ? 1 : -1))
       .slice(0, 90);
   }
 
