@@ -123,6 +123,7 @@ export class ReportsService {
       customerCallCounts,
       followUpStatusCounts,
       callSourcedSales,
+      needsFollowUpCompletedCount,
     ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
@@ -135,11 +136,19 @@ export class ReportsService {
       this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } }, _count: true }),
       this.prisma.followUp.groupBy({ by: ['status'], where: { call: followUpCallFilter }, _count: true }),
       this.prisma.sale.count({ where: salesWhere }),
+      // A "needs_follow_up" call whose follow-up actually got closed out
+      // successfully represents realized interest too -- counting only the
+      // AI's original sentiment label undercounts it, since sentiment never
+      // gets revised after the fact.
+      this.prisma.call.count({ where: { ...base, extraction: { sentiment: 'needs_follow_up' }, followUps: { some: { status: 'completed' } } } }),
     ]);
 
     const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
     const interestedCount = sentimentCounts.find((s) => s.sentiment === 'interested')?._count ?? 0;
     const needsFollowUpCount = sentimentCounts.find((s) => s.sentiment === 'needs_follow_up')?._count ?? 0;
+    // Used for interestedRate below -- keeps interestedCount itself (a plain
+    // sentiment tally) meaningful on its own for anything else that reads it.
+    const effectiveInterestedCount = interestedCount + needsFollowUpCompletedCount;
     const customerCount = customerCallCounts.length;
     // Denominator is calls the AI read as genuinely worth following up on
     // (interested or needs_follow_up) -- a "not_interested" call was never
@@ -171,7 +180,7 @@ export class ReportsService {
       followUpsMissed: followUpMissedCount,
       avgCallDurationSeconds:
         durationAgg._avg.durationSeconds != null ? Math.round(durationAgg._avg.durationSeconds) : null,
-      interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
+      interestedRate: sentimentTotal > 0 ? Math.round((effectiveInterestedCount / sentimentTotal) * 100) : null,
       followUpCompletionRate: followUpTotal > 0 ? Math.round((followUpCompletedCount / followUpTotal) * 100) : null,
       // % of "worth following up on" calls that turned into a call-sourced
       // sale (Sale.source = 'call') -- scoped to this report's branch/date
@@ -243,6 +252,7 @@ export class ReportsService {
         period: Date;
         sentiment_total: bigint;
         interested_count: bigint;
+        needs_follow_up_completed: bigint;
         opportunity_count: bigint;
         converted_count: bigint;
         fu_total: bigint;
@@ -253,6 +263,10 @@ export class ReportsService {
         date_trunc('day', calls.call_date) AS period,
         COUNT(*) FILTER (WHERE ce.sentiment IS NOT NULL) AS sentiment_total,
         COUNT(*) FILTER (WHERE ce.sentiment = 'interested') AS interested_count,
+        -- A "needs_follow_up" call whose follow-up actually got closed out
+        -- successfully represents realized interest too -- same reasoning
+        -- as summary()'s interestedRate.
+        COUNT(*) FILTER (WHERE ce.sentiment = 'needs_follow_up' AND fu.status = 'completed') AS needs_follow_up_completed,
         COUNT(*) FILTER (WHERE ce.sentiment IN ('interested', 'needs_follow_up')) AS opportunity_count,
         COUNT(*) FILTER (
           WHERE ce.sentiment IN ('interested', 'needs_follow_up')
@@ -272,13 +286,15 @@ export class ReportsService {
       .map((r) => {
         const sentimentTotal = Number(r.sentiment_total);
         const interestedCount = Number(r.interested_count);
+        const needsFollowUpCompleted = Number(r.needs_follow_up_completed);
         const opportunityCount = Number(r.opportunity_count);
         const convertedCount = Number(r.converted_count);
         const fuTotal = Number(r.fu_total);
         const fuCompleted = Number(r.fu_completed);
+        const effectiveInterestedCount = interestedCount + needsFollowUpCompleted;
         return {
           period: r.period.toISOString(),
-          interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
+          interestedRate: sentimentTotal > 0 ? Math.round((effectiveInterestedCount / sentimentTotal) * 100) : null,
           callToSaleRate: opportunityCount > 0 ? Math.round((convertedCount / opportunityCount) * 100) : null,
           followUpCompletionRate: fuTotal > 0 ? Math.round((fuCompleted / fuTotal) * 100) : null,
         };
