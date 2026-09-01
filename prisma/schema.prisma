@@ -977,6 +977,9 @@ enum SaleSource {
   dastagir
   karthik
   referral
+  instagram
+  facebook
+  youtube
   unknown
 
   @@map("sale_source")
