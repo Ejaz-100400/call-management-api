@@ -980,6 +980,7 @@ enum SaleSource {
   instagram
   facebook
   youtube
+  regular_customer
   unknown
 
   @@map("sale_source")

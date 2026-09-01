@@ -12,8 +12,21 @@ export class QuerySalesDto {
   @IsOptional()
   @ToArray()
   @IsArray()
-  @IsIn(['call', 'whatsapp', 'walk_in', 'owner', 'dastagir', 'karthik', 'referral', 'instagram', 'facebook', 'youtube', 'unknown'], { each: true })
-  source?: ('call' | 'whatsapp' | 'walk_in' | 'owner' | 'dastagir' | 'karthik' | 'referral' | 'instagram' | 'facebook' | 'youtube' | 'unknown')[];
+  @IsIn(['call', 'whatsapp', 'walk_in', 'owner', 'dastagir', 'karthik', 'referral', 'instagram', 'facebook', 'youtube', 'regular_customer', 'unknown'], { each: true })
+  source?: (
+    | 'call'
+    | 'whatsapp'
+    | 'walk_in'
+    | 'owner'
+    | 'dastagir'
+    | 'karthik'
+    | 'referral'
+    | 'instagram'
+    | 'facebook'
+    | 'youtube'
+    | 'regular_customer'
+    | 'unknown'
+  )[];
 
   @IsOptional()
   @IsString()
