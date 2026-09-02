@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Branch, Prisma } from '@prisma/client';
-import { endOfDayIST, istMinuteOfDay, startOfDayIST, todayIST } from '../common/timezone.util';
+import { dateOnly, endOfDayIST, istMinuteOfDay, startOfDayIST, todayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { QuerySalesDto } from './dto/query-sales.dto';
@@ -24,8 +24,8 @@ export class SalesService {
       ...(query.phone && { customerPhone: { contains: query.phone } }),
       ...((query.dateFrom || query.dateTo) && {
         saleDate: {
-          ...(query.dateFrom && { gte: startOfDayIST(query.dateFrom) }),
-          ...(query.dateTo && { lt: endOfDayIST(query.dateTo) }),
+          ...(query.dateFrom && { gte: dateOnly(query.dateFrom) }),
+          ...(query.dateTo && { lte: dateOnly(query.dateTo) }),
         },
       }),
     };
@@ -153,7 +153,7 @@ export class SalesService {
 
     const today = todayIST();
     const todaysSales = await this.prisma.sale.findMany({
-      where: { saleDate: { gte: startOfDayIST(today), lt: endOfDayIST(today) } },
+      where: { saleDate: dateOnly(today) },
       select: { branch: true },
       distinct: ['branch'],
     });
@@ -171,22 +171,30 @@ export class SalesService {
    * counting it in the denominator would understate the real rate.
    */
   async conversionSummary(filters: { dateFrom?: string; dateTo?: string; branch?: Branch[] }) {
-    const dateWhere = (filters.dateFrom || filters.dateTo) && {
+    // Sale.saleDate/InPersonEnquiry.enquiryDate are date-only columns and
+    // need `dateOnly` bounds; Call.callDate is a timestamptz and needs the
+    // IST-day-boundary bounds -- these are NOT interchangeable, see dateOnly's
+    // doc comment in timezone.util.ts.
+    const dateOnlyWhere = (filters.dateFrom || filters.dateTo) && {
+      ...(filters.dateFrom && { gte: dateOnly(filters.dateFrom) }),
+      ...(filters.dateTo && { lte: dateOnly(filters.dateTo) }),
+    };
+    const callDateWhere = (filters.dateFrom || filters.dateTo) && {
       ...(filters.dateFrom && { gte: startOfDayIST(filters.dateFrom) }),
       ...(filters.dateTo && { lt: endOfDayIST(filters.dateTo) }),
     };
 
     const saleWhere: Prisma.SaleWhereInput = {
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
-      ...(dateWhere && { saleDate: dateWhere }),
+      ...(dateOnlyWhere && { saleDate: dateOnlyWhere }),
     };
     const enquiryWhere: Prisma.InPersonEnquiryWhereInput = {
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
-      ...(dateWhere && { enquiryDate: dateWhere }),
+      ...(dateOnlyWhere && { enquiryDate: dateOnlyWhere }),
     };
     const callWhere: Prisma.CallWhereInput = {
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
-      ...(dateWhere && { callDate: dateWhere }),
+      ...(callDateWhere && { callDate: callDateWhere }),
       extraction: { sentiment: { in: ['interested', 'needs_follow_up'] } },
     };
 

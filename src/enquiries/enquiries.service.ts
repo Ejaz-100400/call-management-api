@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
+import { dateOnly } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEnquiryDto } from './dto/create-enquiry.dto';
 import { QueryEnquiriesDto } from './dto/query-enquiries.dto';
@@ -20,8 +20,8 @@ export class EnquiriesService {
       ...(query.phone && { customerPhone: { contains: query.phone } }),
       ...((query.dateFrom || query.dateTo) && {
         enquiryDate: {
-          ...(query.dateFrom && { gte: startOfDayIST(query.dateFrom) }),
-          ...(query.dateTo && { lt: endOfDayIST(query.dateTo) }),
+          ...(query.dateFrom && { gte: dateOnly(query.dateFrom) }),
+          ...(query.dateTo && { lte: dateOnly(query.dateTo) }),
         },
       }),
     };

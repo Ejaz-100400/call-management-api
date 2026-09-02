@@ -51,6 +51,22 @@ export function todayIST(): string {
 }
 
 /**
+ * Bounds for filtering a date-only (`@db.Date`) column -- Sale.saleDate,
+ * InPersonEnquiry.enquiryDate. Those columns are written as plain
+ * UTC-midnight dates (see `new Date(dto.saleDate)` at the call sites that
+ * create them), NOT IST-shifted instants. Filtering them with
+ * startOfDayIST/endOfDayIST is a bug: those shift the boundary by -5.5h, and
+ * Postgres then truncates that shifted instant to the wrong UTC calendar day
+ * when comparing against the DATE column -- silently matching the PREVIOUS
+ * day's rows instead of the intended day. Use `gte: dateOnly(dateFrom), lte:
+ * dateOnly(dateTo)` for these columns instead -- inclusive on both ends
+ * since there's no time-of-day component to exceed.
+ */
+export function dateOnly(dateStr: string): Date {
+  return new Date(dateStr);
+}
+
+/**
  * The inverse of parseIstTimestamp: renders a real instant as the IST
  * wall-clock string Exotel's own APIs expect (e.g. as a DateCreated filter
  * value), "YYYY-MM-DD HH:MM:SS". Formatting with plain `toISOString()`

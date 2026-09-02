@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
-import { endOfDayIST, startOfDayIST } from '../common/timezone.util';
+import { dateOnly, endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryReportsDto } from './dto/query-reports.dto';
 
@@ -103,10 +103,13 @@ export class ReportsService {
     const salesWhere: Prisma.SaleWhereInput = {
       source: 'call',
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
+      // Sale.saleDate is a date-only column -- dateOnly bounds, not the
+      // timestamptz-oriented startOfDayIST/endOfDayIST used for callDate
+      // above. See dateOnly's doc comment in timezone.util.ts.
       ...((filters.dateFrom || filters.dateTo) && {
         saleDate: {
-          ...(filters.dateFrom && { gte: startOfDayIST(filters.dateFrom) }),
-          ...(filters.dateTo && { lt: endOfDayIST(filters.dateTo) }),
+          ...(filters.dateFrom && { gte: dateOnly(filters.dateFrom) }),
+          ...(filters.dateTo && { lte: dateOnly(filters.dateTo) }),
         },
       }),
     };
@@ -235,11 +238,11 @@ export class ReportsService {
   /**
    * Same three rates as summary() (interestedRate, callToSaleRate,
    * followUpCompletionRate), broken out per day -- powers the Calendar
-   * tab's rate-based view. Conversion is judged per *call* here (does this
-   * call have a matching sale via matchedCallId?) rather than per sale's
-   * own saleDate like summary() does -- a sale can get recorded days after
-   * the call that led to it, and attributing it to the call's own day is
-   * the more meaningful reading for a day-by-day calendar.
+   * tab's rate-based view. callToSaleRate here uses the exact same
+   * attribution as summary()'s: a sale counts toward whatever day it was
+   * *recorded* on (Sale.saleDate), not the day of the call that led to it --
+   * same workflow, just narrowed to one day's window instead of the whole
+   * filtered period.
    */
   async dailyRates(filters: QueryReportsDto = {}) {
     const conditions = this.buildCallConditions(filters, 'calls', 'ce');
@@ -254,7 +257,6 @@ export class ReportsService {
         interested_count: bigint;
         needs_follow_up_completed: bigint;
         opportunity_count: bigint;
-        converted_count: bigint;
         fu_total: bigint;
         fu_completed: bigint;
       }>
@@ -268,10 +270,6 @@ export class ReportsService {
         -- as summary()'s interestedRate.
         COUNT(*) FILTER (WHERE ce.sentiment = 'needs_follow_up' AND fu.status = 'completed') AS needs_follow_up_completed,
         COUNT(*) FILTER (WHERE ce.sentiment IN ('interested', 'needs_follow_up')) AS opportunity_count,
-        COUNT(*) FILTER (
-          WHERE ce.sentiment IN ('interested', 'needs_follow_up')
-          AND EXISTS (SELECT 1 FROM sales s WHERE s.matched_call_id = calls.id)
-        ) AS converted_count,
         COUNT(*) FILTER (WHERE fu.id IS NOT NULL AND ${notImportExcluded}) AS fu_total,
         COUNT(*) FILTER (WHERE fu.status = 'completed' AND ${notImportExcluded}) AS fu_completed
       FROM calls
@@ -282,16 +280,37 @@ export class ReportsService {
       ORDER BY period DESC;
     `);
 
+    // Same salesWhere shape as summary()'s callToSaleRate -- branch + date
+    // range, keyed on the sale's own saleDate.
+    const salesByDay = await this.prisma.sale.groupBy({
+      by: ['saleDate'],
+      where: {
+        source: 'call',
+        ...(filters.branch?.length && { branch: { in: filters.branch } }),
+        // saleDate is date-only -- dateOnly bounds, not the timestamptz
+        // startOfDayIST/endOfDayIST used for call_date above.
+        ...((filters.dateFrom || filters.dateTo) && {
+          saleDate: {
+            ...(filters.dateFrom && { gte: dateOnly(filters.dateFrom) }),
+            ...(filters.dateTo && { lte: dateOnly(filters.dateTo) }),
+          },
+        }),
+      },
+      _count: true,
+    });
+    const salesCountByDay = new Map<number, number>();
+    for (const s of salesByDay) salesCountByDay.set(s.saleDate.getTime(), s._count);
+
     return rows
       .map((r) => {
         const sentimentTotal = Number(r.sentiment_total);
         const interestedCount = Number(r.interested_count);
         const needsFollowUpCompleted = Number(r.needs_follow_up_completed);
         const opportunityCount = Number(r.opportunity_count);
-        const convertedCount = Number(r.converted_count);
         const fuTotal = Number(r.fu_total);
         const fuCompleted = Number(r.fu_completed);
         const effectiveInterestedCount = interestedCount + needsFollowUpCompleted;
+        const convertedCount = salesCountByDay.get(r.period.getTime()) ?? 0;
         return {
           period: r.period.toISOString(),
           interestedRate: sentimentTotal > 0 ? Math.round((effectiveInterestedCount / sentimentTotal) * 100) : null,
