@@ -287,6 +287,35 @@ export class ReportsService {
     const salesCountByDay = new Map<number, number>();
     for (const s of salesByDay) salesCountByDay.set(s.saleDate.getTime(), s._count);
 
+    // % of a day's total sales (any source) that came in through a social/
+    // messaging channel -- a completely different question from
+    // callToSaleRate above (which is calls converting), so it's kept as its
+    // own query rather than folded into salesByDay's source:'call' filter.
+    const socialSalesConditions: Prisma.Sql[] = [];
+    if (filters.branch?.length) {
+      socialSalesConditions.push(Prisma.sql`branch IN (${Prisma.join(filters.branch.map((b) => Prisma.sql`${b}::branch`))})`);
+    }
+    if (filters.dateFrom) socialSalesConditions.push(Prisma.sql`sale_date >= ${dateOnly(filters.dateFrom)}`);
+    if (filters.dateTo) socialSalesConditions.push(Prisma.sql`sale_date <= ${dateOnly(filters.dateTo)}`);
+    const socialSalesWhereSql =
+      socialSalesConditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(socialSalesConditions, ' AND ')}` : Prisma.empty;
+
+    const socialSalesByDay = await this.prisma.$queryRaw<Array<{ sale_date: Date; total: bigint; social_count: bigint }>>(Prisma.sql`
+      SELECT
+        sale_date,
+        COUNT(*)::bigint AS total,
+        COUNT(*) FILTER (WHERE source IN ('instagram', 'facebook', 'youtube', 'whatsapp'))::bigint AS social_count
+      FROM sales
+      ${socialSalesWhereSql}
+      GROUP BY sale_date;
+    `);
+    const socialMediaRateByDay = new Map<number, number | null>();
+    for (const s of socialSalesByDay) {
+      const total = Number(s.total);
+      const social = Number(s.social_count);
+      socialMediaRateByDay.set(s.sale_date.getTime(), total > 0 ? Math.round((social / total) * 100) : null);
+    }
+
     return rows
       .map((r) => {
         const sentimentTotal = Number(r.sentiment_total);
@@ -300,6 +329,7 @@ export class ReportsService {
           interestedRate: sentimentTotal > 0 ? Math.round((interestedCount / sentimentTotal) * 100) : null,
           callToSaleRate: opportunityCount > 0 ? Math.round((convertedCount / opportunityCount) * 100) : null,
           followUpCompletionRate: fuTotal > 0 ? Math.round((fuCompleted / fuTotal) * 100) : null,
+          socialMediaToSaleRate: socialMediaRateByDay.get(r.period.getTime()) ?? null,
         };
       })
       .sort((a, b) => (a.period < b.period ? 1 : -1))
