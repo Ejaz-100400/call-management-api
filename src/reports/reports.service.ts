@@ -407,22 +407,43 @@ export class ReportsService {
     return rows.map((r) => ({ name: r.name, category: r.category, count: Number(r.count) }));
   }
 
+  /**
+   * Sentiment breakdown per employee, not just a raw count -- powers the
+   * stacked "Top employees by enquiries" bar so each employee's outcomes
+   * (interested / needs follow-up / not interested / not yet extracted) are
+   * visible at a glance, not just volume. The extraction join is now always
+   * needed for this breakdown, unlike other raw-SQL reports here that only
+   * join it when a filter requires it.
+   */
   async topEmployees(limit = 10, filters: QueryReportsDto = {}) {
-    const needsJoin = this.needsExtractionJoin(filters);
-    const conditions = [Prisma.sql`c.employee_id IS NOT NULL`, ...this.buildCallConditions(filters, 'c', needsJoin ? 'ce' : undefined)];
-    const joinSql = needsJoin ? Prisma.sql`LEFT JOIN call_extractions ce ON ce.call_id = c.id` : Prisma.empty;
+    const conditions = [Prisma.sql`c.employee_id IS NOT NULL`, ...this.buildCallConditions(filters, 'c', 'ce')];
 
-    const rows = await this.prisma.$queryRaw<Array<{ name: string; count: bigint }>>(Prisma.sql`
-      SELECT e.name, COUNT(*)::bigint AS count
+    const rows = await this.prisma.$queryRaw<
+      Array<{ name: string; count: bigint; interested: bigint; needs_follow_up: bigint; not_interested: bigint; unknown: bigint }>
+    >(Prisma.sql`
+      SELECT
+        e.name,
+        COUNT(*)::bigint AS count,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'interested')::bigint AS interested,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'needs_follow_up')::bigint AS needs_follow_up,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'not_interested')::bigint AS not_interested,
+        COUNT(*) FILTER (WHERE ce.sentiment IS NULL)::bigint AS unknown
       FROM calls c
       JOIN employees e ON e.id = c.employee_id
-      ${joinSql}
+      LEFT JOIN call_extractions ce ON ce.call_id = c.id
       WHERE ${Prisma.join(conditions, ' AND ')}
       GROUP BY e.id, e.name
       ORDER BY count DESC
       LIMIT ${limit};
     `);
-    return rows.map((r) => ({ name: r.name, count: Number(r.count) }));
+    return rows.map((r) => ({
+      name: r.name,
+      count: Number(r.count),
+      interested: Number(r.interested),
+      needsFollowUp: Number(r.needs_follow_up),
+      notInterested: Number(r.not_interested),
+      unknown: Number(r.unknown),
+    }));
   }
 
   /**
