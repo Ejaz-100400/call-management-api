@@ -100,8 +100,7 @@ export class ReportsService {
     // product to filter by) -- scoped to the two fields they do share with
     // the rest of this report, branch and date range, same as Customer
     // Tracker's own conversion summary uses.
-    const salesWhere: Prisma.SaleWhereInput = {
-      source: 'call',
+    const salesDateBranchWhere: Prisma.SaleWhereInput = {
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
       // Sale.saleDate is a date-only column -- dateOnly bounds, not the
       // timestamptz-oriented startOfDayIST/endOfDayIST used for callDate
@@ -112,6 +111,14 @@ export class ReportsService {
           ...(filters.dateTo && { lte: dateOnly(filters.dateTo) }),
         },
       }),
+    };
+    const salesWhere: Prisma.SaleWhereInput = { ...salesDateBranchWhere, source: 'call' };
+    // Same source-mix question as dailyRates()'s socialMediaToSaleRate --
+    // % of total sales (any source) that came through a social/messaging
+    // channel, not a calls-converting metric like callToSaleRate above.
+    const socialSalesWhere: Prisma.SaleWhereInput = {
+      ...salesDateBranchWhere,
+      source: { in: ['instagram', 'facebook', 'youtube', 'whatsapp'] },
     };
 
     const [
@@ -126,6 +133,8 @@ export class ReportsService {
       customerCallCounts,
       followUpStatusCounts,
       callSourcedSales,
+      totalSalesCount,
+      socialSalesCount,
     ] = await Promise.all([
       this.prisma.call.count({ where: base }),
       this.prisma.call.count({ where: { ...base, businessCategory: 'car_glasses' } }),
@@ -138,6 +147,8 @@ export class ReportsService {
       this.prisma.call.groupBy({ by: ['customerId'], where: { ...base, customerId: { not: null } }, _count: true }),
       this.prisma.followUp.groupBy({ by: ['status'], where: { call: followUpCallFilter }, _count: true }),
       this.prisma.sale.count({ where: salesWhere }),
+      this.prisma.sale.count({ where: salesDateBranchWhere }),
+      this.prisma.sale.count({ where: socialSalesWhere }),
     ]);
 
     const sentimentTotal = sentimentCounts.reduce((sum, s) => sum + s._count, 0);
@@ -180,6 +191,10 @@ export class ReportsService {
       // sale (Sale.source = 'call') -- scoped to this report's branch/date
       // filters (see salesWhere above for why not every filter applies).
       callToSaleRate: conversionOpportunityCount > 0 ? Math.round((callSourcedSales / conversionOpportunityCount) * 100) : null,
+      // % of total sales (any source) that came through Instagram/Facebook/
+      // YouTube/WhatsApp -- same definition as dailyRates()'s
+      // socialMediaToSaleRate, just for the whole filtered window at once.
+      socialMediaToSaleRate: totalSalesCount > 0 ? Math.round((socialSalesCount / totalSalesCount) * 100) : null,
       totalCustomers: customerCount,
       returningCustomers: returningCustomerCount,
     };
@@ -482,16 +497,38 @@ export class ReportsService {
    * counted as an "unknown" bucket, since that would understate how
    * complete the data actually is going forward.
    */
+  /**
+   * Sentiment breakdown per branch, same reasoning as topEmployees() --
+   * powers the stacked "Calls by branch" bar so each branch's outcome mix
+   * is visible, not just call volume.
+   */
   async byBranch(filters: QueryReportsDto = {}) {
-    const base = this.buildCallWhere(filters);
-    const rows = await this.prisma.call.groupBy({
-      by: ['branch'],
-      where: { ...base, branch: { not: null } },
-      _count: true,
-    });
-    return rows
-      .map((r) => ({ branch: r.branch as string, count: r._count }))
-      .sort((a, b) => b.count - a.count);
+    const conditions = [Prisma.sql`c.branch IS NOT NULL`, ...this.buildCallConditions(filters, 'c', 'ce')];
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{ branch: string; count: bigint; interested: bigint; needs_follow_up: bigint; not_interested: bigint; unknown: bigint }>
+    >(Prisma.sql`
+      SELECT
+        c.branch::text AS branch,
+        COUNT(*)::bigint AS count,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'interested')::bigint AS interested,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'needs_follow_up')::bigint AS needs_follow_up,
+        COUNT(*) FILTER (WHERE ce.sentiment = 'not_interested')::bigint AS not_interested,
+        COUNT(*) FILTER (WHERE ce.sentiment IS NULL)::bigint AS unknown
+      FROM calls c
+      LEFT JOIN call_extractions ce ON ce.call_id = c.id
+      WHERE ${Prisma.join(conditions, ' AND ')}
+      GROUP BY c.branch
+      ORDER BY count DESC;
+    `);
+    return rows.map((r) => ({
+      branch: r.branch,
+      count: Number(r.count),
+      interested: Number(r.interested),
+      needsFollowUp: Number(r.needs_follow_up),
+      notInterested: Number(r.not_interested),
+      unknown: Number(r.unknown),
+    }));
   }
 
   /**
