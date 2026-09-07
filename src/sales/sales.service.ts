@@ -17,6 +17,16 @@ const SOCIAL_MEDIA_SOURCES: SaleSource[] = ['instagram', 'facebook', 'youtube', 
 export class SalesService {
   constructor(private prisma: PrismaService) {}
 
+  // Same reasoning as ReportsService/FollowUpsService: real, live call
+  // tracking only starts 17 Aug 2026 -- anything dated before that is the
+  // one-time historical import, which never represented a call anyone could
+  // actually have converted into a Sale (the Customer Tracker feature
+  // itself wasn't in use until 26 Aug). Counting those calls in the
+  // opportunity denominator would understate callToSaleRate/
+  // overallConversionRate for no real reason, so they're permanently
+  // excluded here too, regardless of the caller's own date filter.
+  private static readonly IMPORT_CUTOFF = startOfDayIST('2026-08-17');
+
   async findAll(query: QuerySalesDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
@@ -199,6 +209,7 @@ export class SalesService {
       ...(filters.branch?.length && { branch: { in: filters.branch } }),
       ...(callDateWhere && { callDate: callDateWhere }),
       extraction: { sentiment: { in: ['interested', 'needs_follow_up'] } },
+      NOT: { callDate: { lt: SalesService.IMPORT_CUTOFF }, extraction: { extractedByModel: 'manual_import' } },
     };
 
     const [salesBySource, enquiriesByOutcome, interestedCallCount, callSourceSaleCount] = await Promise.all([
