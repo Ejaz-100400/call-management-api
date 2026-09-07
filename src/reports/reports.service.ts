@@ -1,8 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { BusinessCategory, Prisma, SentimentType } from '@prisma/client';
+import { BusinessCategory, Prisma, SaleSource, SentimentType } from '@prisma/client';
 import { dateOnly, endOfDayIST, startOfDayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryReportsDto } from './dto/query-reports.dto';
+
+// A "regular_customer" sale is still someone who originally came in through
+// a call -- the source label just marks them as a repeat buyer rather than
+// their acquisition channel, so it counts toward callToSaleRate the same as
+// a plain 'call' sale. Kept in sync manually with the identical set in
+// sales.service.ts (one lives in Prisma where-clauses, the other alongside
+// it -- no shared constants file yet).
+const CALL_SALE_SOURCES: SaleSource[] = ['call', 'regular_customer'];
 
 @Injectable()
 export class ReportsService {
@@ -112,7 +120,7 @@ export class ReportsService {
         },
       }),
     };
-    const salesWhere: Prisma.SaleWhereInput = { ...salesDateBranchWhere, source: 'call' };
+    const salesWhere: Prisma.SaleWhereInput = { ...salesDateBranchWhere, source: { in: CALL_SALE_SOURCES } };
     // Same source-mix question as dailyRates()'s socialMediaToSaleRate --
     // % of total sales (any source) that came through a social/messaging
     // channel, not a calls-converting metric like callToSaleRate above.
@@ -286,7 +294,7 @@ export class ReportsService {
     const salesByDay = await this.prisma.sale.groupBy({
       by: ['saleDate'],
       where: {
-        source: 'call',
+        source: { in: CALL_SALE_SOURCES },
         ...(filters.branch?.length && { branch: { in: filters.branch } }),
         // saleDate is date-only -- dateOnly bounds, not the timestamptz
         // startOfDayIST/endOfDayIST used for call_date above.

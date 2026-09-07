@@ -12,6 +12,12 @@ const REMINDER_CUTOFF_MINUTE = 20 * 60 + 30;
 // Same set Reports' socialMediaToSaleRate uses -- kept in sync manually
 // since one lives in Prisma where-clauses and the other in raw SQL.
 const SOCIAL_MEDIA_SOURCES: SaleSource[] = ['instagram', 'facebook', 'youtube', 'whatsapp'];
+// A "regular_customer" sale is still someone who originally came in through
+// a call -- the source label just marks them as a repeat buyer rather than
+// their acquisition channel, so it counts toward callToSaleRate the same as
+// a plain 'call' sale. Kept in sync manually with the identical set in
+// reports.service.ts.
+const CALL_SALE_SOURCES: SaleSource[] = ['call', 'regular_customer'];
 
 @Injectable()
 export class SalesService {
@@ -212,13 +218,15 @@ export class SalesService {
       NOT: { callDate: { lt: SalesService.IMPORT_CUTOFF }, extraction: { extractedByModel: 'manual_import' } },
     };
 
-    const [salesBySource, enquiriesByOutcome, interestedCallCount, callSourceSaleCount] = await Promise.all([
+    const [salesBySource, enquiriesByOutcome, interestedCallCount] = await Promise.all([
       this.prisma.sale.groupBy({ by: ['source'], where: saleWhere, _count: true }),
       this.prisma.inPersonEnquiry.groupBy({ by: ['outcome'], where: enquiryWhere, _count: true }),
       this.prisma.call.count({ where: callWhere }),
-      this.prisma.sale.count({ where: { ...saleWhere, source: 'call' } }),
     ]);
 
+    const callSourceSaleCount = salesBySource
+      .filter((s) => CALL_SALE_SOURCES.includes(s.source))
+      .reduce((sum, s) => sum + s._count, 0);
     const totalSales = salesBySource.reduce((sum, s) => sum + s._count, 0);
     const totalEnquiries = enquiriesByOutcome.reduce((sum, e) => sum + e._count, 0);
     const purchasedEnquiries = enquiriesByOutcome.find((e) => e.outcome === 'purchased')?._count ?? 0;
