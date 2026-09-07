@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Branch, Prisma } from '@prisma/client';
+import { Branch, Prisma, SaleSource } from '@prisma/client';
 import { dateOnly, endOfDayIST, istMinuteOfDay, startOfDayIST, todayIST } from '../common/timezone.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
@@ -9,6 +9,9 @@ import { UpdateSaleDto } from './dto/update-sale.dto';
 const ALL_BRANCHES: Branch[] = ['ambattur', 'kattankulathur', 'sithalapakkam', 'pondicherry'];
 // 20:30 IST, expressed in minutes since IST midnight -- see istMinuteOfDay.
 const REMINDER_CUTOFF_MINUTE = 20 * 60 + 30;
+// Same set Reports' socialMediaToSaleRate uses -- kept in sync manually
+// since one lives in Prisma where-clauses and the other in raw SQL.
+const SOCIAL_MEDIA_SOURCES: SaleSource[] = ['instagram', 'facebook', 'youtube', 'whatsapp'];
 
 @Injectable()
 export class SalesService {
@@ -208,6 +211,20 @@ export class SalesService {
     const totalSales = salesBySource.reduce((sum, s) => sum + s._count, 0);
     const totalEnquiries = enquiriesByOutcome.reduce((sum, e) => sum + e._count, 0);
     const purchasedEnquiries = enquiriesByOutcome.find((e) => e.outcome === 'purchased')?._count ?? 0;
+    // Same source-mix definition as Reports' socialMediaToSaleRate -- % of
+    // total sales (any source) that came through a social/messaging
+    // channel. Derived from salesBySource already fetched above rather than
+    // a separate query.
+    const socialSalesCount = salesBySource
+      .filter((s) => SOCIAL_MEDIA_SOURCES.includes(s.source))
+      .reduce((sum, s) => sum + s._count, 0);
+    // Blends both funnels into one number: every real conversion (a
+    // call-sourced sale or a purchased walk-in) over every real opportunity
+    // (an interested/needs_follow_up call or a walk-in enquiry) -- distinct
+    // from callToSaleRate/walkInToSaleRate, which look at each channel on
+    // its own.
+    const overallOpportunityCount = interestedCallCount + totalEnquiries;
+    const overallConversionCount = callSourceSaleCount + purchasedEnquiries;
 
     return {
       totalSales,
@@ -216,6 +233,8 @@ export class SalesService {
       purchasedEnquiries,
       callToSaleRate: interestedCallCount > 0 ? Math.round((callSourceSaleCount / interestedCallCount) * 100) : null,
       walkInToSaleRate: totalEnquiries > 0 ? Math.round((purchasedEnquiries / totalEnquiries) * 100) : null,
+      socialMediaToSaleRate: totalSales > 0 ? Math.round((socialSalesCount / totalSales) * 100) : null,
+      overallConversionRate: overallOpportunityCount > 0 ? Math.round((overallConversionCount / overallOpportunityCount) * 100) : null,
     };
   }
 }
