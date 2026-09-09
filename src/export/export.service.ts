@@ -4,8 +4,8 @@ import type { Browser } from 'puppeteer-core';
 import { CallsService } from '../calls/calls.service';
 import { QueryCallsDto } from '../calls/dto/query-calls.dto';
 import { StockService } from '../stock/stock.service';
-import { QueryStockItemsDto } from '../stock/dto/query-stock-items.dto';
-import { STOCK_LOCATIONS } from '../stock/stock-location.util';
+import { STOCK_LOCATIONS, StockLocationValue } from '../stock/stock-location.util';
+import { QueryStockExportDto } from './dto/query-stock-export.dto';
 
 /**
  * Render's standard Node runtime doesn't have the system shared libraries
@@ -173,14 +173,24 @@ export class ExportService {
    * on-hand quantities the Stock Items page itself shows, so "export what
    * I'm looking at" holds here too. One row per item with a column per
    * location gives the branch+category breakdown in a single flat table,
-   * rather than requiring a separate report per branch.
+   * rather than requiring a separate report per branch. `location` is
+   * deliberately not forwarded -- it's export-only (which columns render),
+   * not an item filter, so leaving it out here doesn't shrink the row set.
    */
-  private getStockExportRows(query: QueryStockItemsDto) {
-    return this.stockService.findAllItems(query);
+  private getStockExportRows(query: QueryStockExportDto) {
+    const { category, productId, search, active } = query;
+    return this.stockService.findAllItems({ category, productId, search, active });
   }
 
-  async generateStockExcel(query: QueryStockItemsDto): Promise<Buffer> {
+  // Unset/empty `location` means "all locations", same as every other
+  // multi-select filter in this app -- STOCK_LOCATIONS is the fallback.
+  private resolveLocations(query: QueryStockExportDto): StockLocationValue[] {
+    return query.location?.length ? query.location : [...STOCK_LOCATIONS];
+  }
+
+  async generateStockExcel(query: QueryStockExportDto): Promise<Buffer> {
     const rows = await this.getStockExportRows(query);
+    const locations = this.resolveLocations(query);
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Stock');
@@ -190,7 +200,7 @@ export class ExportService {
       { header: 'Category', key: 'category', width: 18 },
       { header: 'Unit', key: 'unit', width: 10 },
       { header: 'Price', key: 'price', width: 12 },
-      ...STOCK_LOCATIONS.map((loc) => ({ header: STOCK_LOCATION_LABELS[loc], key: loc, width: 16 })),
+      ...locations.map((loc) => ({ header: STOCK_LOCATION_LABELS[loc], key: loc, width: 16 })),
       { header: 'Reorder At', key: 'reorderThreshold', width: 12 },
       { header: 'Low Stock', key: 'lowStock', width: 12 },
       { header: 'Active', key: 'active', width: 10 },
@@ -198,7 +208,9 @@ export class ExportService {
     sheet.getRow(1).font = { bold: true };
 
     for (const item of rows) {
-      const quantityByLocation = Object.fromEntries(item.quantities.map((q) => [q.location, q.quantity]));
+      const quantityByLocation = Object.fromEntries(
+        item.quantities.filter((q) => locations.includes(q.location)).map((q) => [q.location, q.quantity]),
+      );
       sheet.addRow({
         name: item.name,
         category: CATEGORY_LABELS[item.category] ?? item.category,
@@ -206,7 +218,7 @@ export class ExportService {
         price: item.price != null ? Number(item.price) : '',
         ...quantityByLocation,
         reorderThreshold: item.reorderThreshold,
-        lowStock: item.quantities.some((q) => q.lowStock) ? 'Yes' : 'No',
+        lowStock: item.quantities.some((q) => locations.includes(q.location) && q.lowStock) ? 'Yes' : 'No',
         active: item.active ? 'Yes' : 'No',
       });
     }
@@ -215,9 +227,10 @@ export class ExportService {
     return Buffer.from(rawBuffer as unknown as ArrayBuffer);
   }
 
-  async generateStockPdf(query: QueryStockItemsDto): Promise<Buffer> {
+  async generateStockPdf(query: QueryStockExportDto): Promise<Buffer> {
     const rows = await this.getStockExportRows(query);
-    const html = this.buildStockReportHtml(rows);
+    const locations = this.resolveLocations(query);
+    const html = this.buildStockReportHtml(rows, locations);
 
     let browser: Browser;
     try {
@@ -236,15 +249,17 @@ export class ExportService {
     }
   }
 
-  private buildStockReportHtml(rows: Awaited<ReturnType<ExportService['getStockExportRows']>>): string {
+  private buildStockReportHtml(rows: Awaited<ReturnType<ExportService['getStockExportRows']>>, locations: StockLocationValue[]): string {
     const tableRows = rows
       .map((item) => {
         const quantityByLocation = new Map(item.quantities.map((q) => [q.location, q]));
-        const locationCells = STOCK_LOCATIONS.map((loc) => {
-          const q = quantityByLocation.get(loc);
-          const low = q?.lowStock;
-          return `<td${low ? ' style="color:#c0392b;font-weight:bold;"' : ''}>${q?.quantity ?? 0}</td>`;
-        }).join('');
+        const locationCells = locations
+          .map((loc) => {
+            const q = quantityByLocation.get(loc);
+            const low = q?.lowStock;
+            return `<td${low ? ' style="color:#c0392b;font-weight:bold;"' : ''}>${q?.quantity ?? 0}</td>`;
+          })
+          .join('');
         return `
         <tr>
           <td>${escapeHtml(item.name)}</td>
@@ -256,7 +271,7 @@ export class ExportService {
       })
       .join('');
 
-    const locationHeaders = STOCK_LOCATIONS.map((loc) => `<th>${STOCK_LOCATION_LABELS[loc]}</th>`).join('');
+    const locationHeaders = locations.map((loc) => `<th>${STOCK_LOCATION_LABELS[loc]}</th>`).join('');
 
     return `
       <html>

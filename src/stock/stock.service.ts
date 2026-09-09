@@ -59,6 +59,7 @@ export class StockService {
   async findAllItems(query: QueryStockItemsDto) {
     const where: Prisma.StockItemWhereInput = {
       ...(query.category?.length && { category: { in: query.category } }),
+      ...(query.productId?.length && { productId: { in: query.productId } }),
       ...(query.search && { name: { contains: query.search, mode: 'insensitive' } }),
       ...(query.active !== undefined && { active: query.active }),
     };

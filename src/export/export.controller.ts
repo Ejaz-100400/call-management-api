@@ -4,9 +4,9 @@ import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { QueryCallsDto } from '../calls/dto/query-calls.dto';
-import { QueryStockItemsDto } from '../stock/dto/query-stock-items.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExportService } from './export.service';
+import { QueryStockExportDto } from './dto/query-stock-export.dto';
 
 @Controller('export')
 @Roles('admin', 'manager')
@@ -51,7 +51,7 @@ export class ExportController {
   }
 
   @Get('stock.xlsx')
-  async exportStockExcel(@Query() query: QueryStockItemsDto, @CurrentUser() user: User, @Res() res: Response) {
+  async exportStockExcel(@Query() query: QueryStockExportDto, @CurrentUser() user: User, @Res() res: Response) {
     const buffer = await this.exportService.generateStockExcel(query);
     await this.logExport(user.id, 'xlsx', 'stock', query);
 
@@ -63,7 +63,7 @@ export class ExportController {
   }
 
   @Get('stock.pdf')
-  async exportStockPdf(@Query() query: QueryStockItemsDto, @CurrentUser() user: User, @Res() res: Response) {
+  async exportStockPdf(@Query() query: QueryStockExportDto, @CurrentUser() user: User, @Res() res: Response) {
     const buffer = await this.exportService.generateStockPdf(query);
     await this.logExport(user.id, 'pdf', 'stock', query);
 
@@ -78,7 +78,7 @@ export class ExportController {
     return new Date().toISOString().slice(0, 10);
   }
 
-  private logExport(userId: string, format: string, entity: string, query: QueryCallsDto | QueryStockItemsDto) {
+  private logExport(userId: string, format: string, entity: string, query: QueryCallsDto | QueryStockExportDto) {
     return this.prisma.auditLog.create({
       data: {
         userId,
