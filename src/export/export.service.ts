@@ -3,6 +3,9 @@ import ExcelJS from 'exceljs';
 import type { Browser } from 'puppeteer-core';
 import { CallsService } from '../calls/calls.service';
 import { QueryCallsDto } from '../calls/dto/query-calls.dto';
+import { StockService } from '../stock/stock.service';
+import { QueryStockItemsDto } from '../stock/dto/query-stock-items.dto';
+import { STOCK_LOCATIONS } from '../stock/stock-location.util';
 
 /**
  * Render's standard Node runtime doesn't have the system shared libraries
@@ -35,7 +38,10 @@ const EXPORT_ROW_CAP = 10000;
 export class ExportService {
   private readonly logger = new Logger(ExportService.name);
 
-  constructor(private callsService: CallsService) {}
+  constructor(
+    private callsService: CallsService,
+    private stockService: StockService,
+  ) {}
 
   /**
    * Reuses the exact same filter-building logic as GET /calls, so "export
@@ -161,7 +167,138 @@ export class ExportService {
         </body>
       </html>`;
   }
+
+  /**
+   * Reuses StockService.findAllItems() -- the exact same per-location
+   * on-hand quantities the Stock Items page itself shows, so "export what
+   * I'm looking at" holds here too. One row per item with a column per
+   * location gives the branch+category breakdown in a single flat table,
+   * rather than requiring a separate report per branch.
+   */
+  private getStockExportRows(query: QueryStockItemsDto) {
+    return this.stockService.findAllItems(query);
+  }
+
+  async generateStockExcel(query: QueryStockItemsDto): Promise<Buffer> {
+    const rows = await this.getStockExportRows(query);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Stock');
+
+    sheet.columns = [
+      { header: 'Name', key: 'name', width: 28 },
+      { header: 'Category', key: 'category', width: 18 },
+      { header: 'Unit', key: 'unit', width: 10 },
+      { header: 'Price', key: 'price', width: 12 },
+      ...STOCK_LOCATIONS.map((loc) => ({ header: STOCK_LOCATION_LABELS[loc], key: loc, width: 16 })),
+      { header: 'Reorder At', key: 'reorderThreshold', width: 12 },
+      { header: 'Low Stock', key: 'lowStock', width: 12 },
+      { header: 'Active', key: 'active', width: 10 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    for (const item of rows) {
+      const quantityByLocation = Object.fromEntries(item.quantities.map((q) => [q.location, q.quantity]));
+      sheet.addRow({
+        name: item.name,
+        category: CATEGORY_LABELS[item.category] ?? item.category,
+        unit: item.unit,
+        price: item.price != null ? Number(item.price) : '',
+        ...quantityByLocation,
+        reorderThreshold: item.reorderThreshold,
+        lowStock: item.quantities.some((q) => q.lowStock) ? 'Yes' : 'No',
+        active: item.active ? 'Yes' : 'No',
+      });
+    }
+
+    const rawBuffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(rawBuffer as unknown as ArrayBuffer);
+  }
+
+  async generateStockPdf(query: QueryStockItemsDto): Promise<Buffer> {
+    const rows = await this.getStockExportRows(query);
+    const html = this.buildStockReportHtml(rows);
+
+    let browser: Browser;
+    try {
+      browser = await launchBrowser();
+    } catch (err) {
+      this.logger.error(`Failed to launch headless browser for PDF export: ${(err as Error).message}`);
+      throw err;
+    }
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'load' });
+      const pdfBuffer = await page.pdf({ format: 'A4', landscape: true, printBackground: true });
+      return Buffer.from(pdfBuffer);
+    } finally {
+      await browser.close();
+    }
+  }
+
+  private buildStockReportHtml(rows: Awaited<ReturnType<ExportService['getStockExportRows']>>): string {
+    const tableRows = rows
+      .map((item) => {
+        const quantityByLocation = new Map(item.quantities.map((q) => [q.location, q]));
+        const locationCells = STOCK_LOCATIONS.map((loc) => {
+          const q = quantityByLocation.get(loc);
+          const low = q?.lowStock;
+          return `<td${low ? ' style="color:#c0392b;font-weight:bold;"' : ''}>${q?.quantity ?? 0}</td>`;
+        }).join('');
+        return `
+        <tr>
+          <td>${escapeHtml(item.name)}</td>
+          <td>${escapeHtml(CATEGORY_LABELS[item.category] ?? item.category)}</td>
+          <td>${escapeHtml(item.unit)}</td>
+          ${locationCells}
+          <td>${item.reorderThreshold}</td>
+        </tr>`;
+      })
+      .join('');
+
+    const locationHeaders = STOCK_LOCATIONS.map((loc) => `<th>${STOCK_LOCATION_LABELS[loc]}</th>`).join('');
+
+    return `
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; font-size: 11px; }
+            h1 { font-size: 16px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
+            th { background: #f0f0f0; }
+          </style>
+        </head>
+        <body>
+          <h1>Stock Report -- generated ${new Date().toLocaleString()}</h1>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th><th>Category</th><th>Unit</th>
+                ${locationHeaders}
+                <th>Reorder At</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </body>
+      </html>`;
+  }
 }
+
+const CATEGORY_LABELS: Record<string, string> = {
+  car_glasses: 'Car Glasses',
+  car_modifications: 'Car Modifications',
+  unknown: 'Unknown',
+};
+
+const STOCK_LOCATION_LABELS: Record<(typeof STOCK_LOCATIONS)[number], string> = {
+  ambattur: 'Ambattur (HQ)',
+  kattankulathur: 'Kattankulathur',
+  sithalapakkam: 'Sithalapakkam',
+  pondicherry: 'Pondicherry',
+  warehouse: 'Warehouse',
+};
 
 // Extraction fields (customer name, employee name, etc.) come from AI-parsed
 // call transcripts, which is effectively untrusted external input by the

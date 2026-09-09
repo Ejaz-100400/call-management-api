@@ -4,6 +4,7 @@ import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { QueryCallsDto } from '../calls/dto/query-calls.dto';
+import { QueryStockItemsDto } from '../stock/dto/query-stock-items.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExportService } from './export.service';
 
@@ -18,7 +19,7 @@ export class ExportController {
   @Get('calls.xlsx')
   async exportExcel(@Query() query: QueryCallsDto, @CurrentUser() user: User, @Res() res: Response) {
     const buffer = await this.exportService.generateExcel(query);
-    await this.logExport(user.id, 'xlsx', query);
+    await this.logExport(user.id, 'xlsx', 'calls', query);
 
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -28,9 +29,9 @@ export class ExportController {
   }
 
   @Get('history')
-  history() {
+  history(@Query('entity') entity?: string) {
     return this.prisma.auditLog.findMany({
-      where: { action: 'export_report' },
+      where: { action: 'export_report', ...(entity && { entity }) },
       orderBy: { createdAt: 'desc' },
       take: 50,
       include: { user: { select: { name: true, email: true } } },
@@ -40,7 +41,7 @@ export class ExportController {
   @Get('calls.pdf')
   async exportPdf(@Query() query: QueryCallsDto, @CurrentUser() user: User, @Res() res: Response) {
     const buffer = await this.exportService.generatePdf(query);
-    await this.logExport(user.id, 'pdf', query);
+    await this.logExport(user.id, 'pdf', 'calls', query);
 
     res.set({
       'Content-Type': 'application/pdf',
@@ -49,16 +50,40 @@ export class ExportController {
     res.send(buffer);
   }
 
+  @Get('stock.xlsx')
+  async exportStockExcel(@Query() query: QueryStockItemsDto, @CurrentUser() user: User, @Res() res: Response) {
+    const buffer = await this.exportService.generateStockExcel(query);
+    await this.logExport(user.id, 'xlsx', 'stock', query);
+
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="stock-export-${this.dateStamp()}.xlsx"`,
+    });
+    res.send(buffer);
+  }
+
+  @Get('stock.pdf')
+  async exportStockPdf(@Query() query: QueryStockItemsDto, @CurrentUser() user: User, @Res() res: Response) {
+    const buffer = await this.exportService.generateStockPdf(query);
+    await this.logExport(user.id, 'pdf', 'stock', query);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="stock-export-${this.dateStamp()}.pdf"`,
+    });
+    res.send(buffer);
+  }
+
   private dateStamp() {
     return new Date().toISOString().slice(0, 10);
   }
 
-  private logExport(userId: string, format: string, query: QueryCallsDto) {
+  private logExport(userId: string, format: string, entity: string, query: QueryCallsDto | QueryStockItemsDto) {
     return this.prisma.auditLog.create({
       data: {
         userId,
         action: 'export_report',
-        entity: 'calls',
+        entity,
         details: { format, filters: query } as object,
       },
     });
