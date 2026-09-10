@@ -79,6 +79,41 @@ export class StockService {
     });
   }
 
+  /**
+   * One item with everything the detail page needs: its catalog fields plus
+   * the linked subcategory name, per-location on-hand (same shape as
+   * findAllItems), and lifetime in/out totals across every location. The
+   * movement history table itself is a separate paginated call
+   * (GET /stock/movements?stockItemId=...), same as the Movements page uses.
+   */
+  async findItem(id: string) {
+    const item = await this.prisma.stockItem.findUnique({
+      where: { id },
+      include: { product: { select: { id: true, name: true } } },
+    });
+    if (!item) throw new NotFoundException(`Stock item ${id} not found`);
+
+    const locationMap = (await this.quantitiesByItem([id])).get(id) ?? new Map<StockLocation, number>();
+    const totalsByType = await this.prisma.stockMovement.groupBy({
+      by: ['type'],
+      where: { stockItemId: id },
+      _sum: { quantity: true },
+      _count: true,
+    });
+    const totalIn = totalsByType.find((t) => t.type === 'in')?._sum.quantity ?? 0;
+    const totalOut = totalsByType.find((t) => t.type === 'out')?._sum.quantity ?? 0;
+    const movementCount = totalsByType.reduce((sum, t) => sum + t._count, 0);
+
+    return {
+      ...item,
+      quantities: ALL_LOCATIONS.map((location) => {
+        const quantity = locationMap.get(location) ?? 0;
+        return { location, quantity, lowStock: item.reorderThreshold > 0 && quantity < item.reorderThreshold };
+      }),
+      totals: { in: totalIn, out: totalOut, net: totalIn - totalOut, movementCount },
+    };
+  }
+
   // productId is purely a subcategory link -- verify it exists (a friendlier
   // 404 than the raw FK violation) but never let it override the name/
   // category the user actually typed, since several distinctly-named items

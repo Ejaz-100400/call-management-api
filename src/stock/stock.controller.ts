@@ -27,6 +27,11 @@ export class StockController {
     return this.stockService.findAllItems(query);
   }
 
+  @Get('items/:id')
+  findItem(@Param('id', ParseUUIDPipe) id: string) {
+    return this.stockService.findItem(id);
+  }
+
   @Post('items')
   @Roles('admin', 'manager')
   createItem(@Body() dto: CreateStockItemDto, @CurrentUser() user: User) {
