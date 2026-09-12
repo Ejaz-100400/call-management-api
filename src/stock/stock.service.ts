@@ -23,6 +23,16 @@ function normalizeItemName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// This catalog uses " constantly for inch sizes (3"INCH, 2.5"INCH, ...).
+// Phone/browser autocorrect commonly swaps a typed straight quote for a
+// curly one (" or ") or a prime (″) -- which then silently matches nothing
+// against the plain " stored in every item's name. Normalizing common
+// quote/prime look-alikes to a plain " (and ' for single-quote look-alikes)
+// before searching means it doesn't matter which variant actually got typed.
+function normalizeSearchTerm(term: string): string {
+  return term.replace(/[“”″]/g, '"').replace(/[‘’′]/g, "'");
+}
+
 @Injectable()
 export class StockService {
   constructor(private prisma: PrismaService) {}
@@ -60,7 +70,7 @@ export class StockService {
     const where: Prisma.StockItemWhereInput = {
       ...(query.category?.length && { category: { in: query.category } }),
       ...(query.productId?.length && { productId: { in: query.productId } }),
-      ...(query.search && { name: { contains: query.search, mode: 'insensitive' } }),
+      ...(query.search && { name: { contains: normalizeSearchTerm(query.search), mode: 'insensitive' } }),
       ...(query.active !== undefined && { active: query.active }),
     };
 
@@ -271,8 +281,8 @@ export class StockService {
       ...(query.type?.length && { type: { in: query.type } }),
       ...(query.search && {
         OR: [
-          { reason: { contains: query.search, mode: 'insensitive' } },
-          { stockItem: { name: { contains: query.search, mode: 'insensitive' } } },
+          { reason: { contains: normalizeSearchTerm(query.search), mode: 'insensitive' } },
+          { stockItem: { name: { contains: normalizeSearchTerm(query.search), mode: 'insensitive' } } },
         ],
       }),
       ...((query.dateFrom || query.dateTo) && {
