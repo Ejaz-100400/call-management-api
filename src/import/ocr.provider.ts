@@ -383,7 +383,11 @@ export async function extractHandwrittenEntries(imageBuffer: Buffer, mediaType: 
     location: e.location ?? null,
     productsDiscussed: e.productsDiscussed ?? [],
     customerRequirements: e.customerRequirements ?? null,
-    budget: e.budget ?? null,
+    // Same guard as ai.provider.ts's extractCallInfo() -- despite the tool
+    // schema declaring `type: 'number'`, Claude can return "" instead of
+    // omitting the field or returning null when no figure is written, which
+    // `?? null` alone wouldn't catch.
+    budget: typeof e.budget === 'number' && Number.isFinite(e.budget) ? e.budget : null,
     followUpRequired: e.followUpRequired ?? false,
     followUpDate: e.followUpDate ?? null,
     summary: e.summary ?? null,

@@ -175,7 +175,13 @@ export async function extractCallInfo(
     location: raw.location ?? null,
     productsDiscussed: raw.productsDiscussed ?? [],
     customerRequirements: raw.customerRequirements ?? null,
-    budget: raw.budget ?? null,
+    // Despite the tool schema declaring `type: 'number'`, tool-use JSON
+    // isn't strictly type-enforced -- Claude has returned "" here for a
+    // call with no specific figure mentioned instead of omitting the field
+    // or returning null. `?? null` only catches null/undefined, so "" (or
+    // any other non-number) sailed straight through into a Prisma Decimal?
+    // column and crashed the upsert. Require an actual finite number.
+    budget: typeof raw.budget === 'number' && Number.isFinite(raw.budget) ? raw.budget : null,
     followUpRequired: raw.followUpRequired ?? false,
     followUpDate: raw.followUpDate ?? null,
     summary: raw.summary ?? '',
