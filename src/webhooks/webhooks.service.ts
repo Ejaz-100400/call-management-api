@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { BusinessCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
 import { parseIstTimestamp } from '../common/timezone.util';
@@ -50,35 +51,55 @@ export class WebhooksService {
       return { received: true, skipped: true };
     }
 
-    const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
-    const callDate = (currentTime ? parseIstTimestamp(currentTime) : null) ?? new Date();
-    // Best-effort default, not a final say -- always correctable afterward
-    // from the call or follow-up itself (see Employees page / CallDetails).
-    const employeeId = dialedNumber ? await this.employees.resolveForCall(dialedNumber, callDate) : null;
+    let call: { id: string };
+    try {
+      const customer = callerPhone ? await this.findOrCreateCustomer(callerPhone) : undefined;
+      const callDate = (currentTime ? parseIstTimestamp(currentTime) : null) ?? new Date();
+      // Best-effort default, not a final say -- always correctable afterward
+      // from the call or follow-up itself (see Employees page / CallDetails).
+      // Guarded so a failure in either lookup (e.g. a transient DB hiccup)
+      // degrades to the same "unassigned"/"unknown" defaults a webhook
+      // without that data would get, instead of throwing and losing the
+      // whole call -- customer creation just above isn't in the same
+      // transaction as the call.create() below, so a throw partway through
+      // this block used to leave an orphaned Customer with no Call at all.
+      const employeeId = dialedNumber ? await this.safeResolveEmployee(dialedNumber, callDate, callSid) : null;
+      const businessCategory = await this.safeResolveCategory(businessNumber, callSid);
 
-    const call = await this.prisma.call.create({
-      data: {
-        externalCallId: callSid ?? undefined,
-        businessCategory: await this.businessNumbers.resolveCategory(businessNumber),
-        customerId: customer?.id,
-        employeeId: employeeId ?? undefined,
-        // Every inbound call is answered at Ambattur -- staff redirect to
-        // one of the other three branches by editing this when a customer
-        // turns out to be nearer one of them, rather than the other way
-        // around.
-        branch: 'ambattur',
-        callDate,
-        durationSeconds: 0, // corrected once the worker fetches real call details
-        recordingStorageKey: null, // filled in once the worker uploads it to object storage
-        status: 'pending',
-      },
-    });
+      call = await this.prisma.call.create({
+        data: {
+          externalCallId: callSid ?? undefined,
+          businessCategory,
+          customerId: customer?.id,
+          employeeId: employeeId ?? undefined,
+          // Every inbound call is answered at Ambattur -- staff redirect to
+          // one of the other three branches by editing this when a customer
+          // turns out to be nearer one of them, rather than the other way
+          // around.
+          branch: 'ambattur',
+          callDate,
+          durationSeconds: 0, // corrected once the worker fetches real call details
+          recordingStorageKey: null, // filled in once the worker uploads it to object storage
+          status: 'pending',
+        },
+      });
 
-    await this.queue.enqueueCallProcessing({
-      type: 'full_reprocess',
-      callId: call.id,
-      callSid,
-    });
+      await this.queue.enqueueCallProcessing({
+        type: 'full_reprocess',
+        callId: call.id,
+        callSid,
+      });
+    } catch (err) {
+      // The one thing this handler must never do silently -- if this call
+      // is genuinely still lost after the guards above, at least a full
+      // stack trace with the CallSid/phone lands directly in the logs
+      // instead of requiring someone to notice it's missing from the app
+      // and paste screenshots back and forth to reconstruct what happened.
+      this.logger.error(
+        `handleCallCompleted failed for CallSid=${callSid} callerPhone=${callerPhone}: ${err instanceof Error ? err.stack ?? err.message : String(err)}`,
+      );
+      throw err;
+    }
 
     // Fire-and-forget: the customer's real number never shows up on a
     // technician's phone (Exotel/carrier forwarding means the caller ID they
@@ -127,5 +148,27 @@ export class WebhooksService {
       create: { phoneNumber },
       update: {},
     });
+  }
+
+  private async safeResolveEmployee(dialedNumber: string, callDate: Date, callSid: string | undefined): Promise<string | null> {
+    try {
+      return await this.employees.resolveForCall(dialedNumber, callDate);
+    } catch (err) {
+      this.logger.warn(
+        `resolveForCall failed for dialedNumber=${dialedNumber} CallSid=${callSid} -- proceeding with no employee assigned: ${err instanceof Error ? err.stack ?? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async safeResolveCategory(businessNumber: string | undefined, callSid: string | undefined): Promise<BusinessCategory> {
+    try {
+      return await this.businessNumbers.resolveCategory(businessNumber);
+    } catch (err) {
+      this.logger.warn(
+        `resolveCategory failed for businessNumber=${businessNumber} CallSid=${callSid} -- proceeding as 'unknown': ${err instanceof Error ? err.stack ?? err.message : String(err)}`,
+      );
+      return 'unknown';
+    }
   }
 }
