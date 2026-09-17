@@ -141,6 +141,7 @@ model Customer {
   calls       Call[]
   sales       Sale[]
   enquiries   InPersonEnquiry[]
+  whatsappConversations WhatsAppConversation[]
 
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_customers_name_trgm", type: Gin)
   @@index([phoneNumber(ops: raw("gin_trgm_ops"))], map: "idx_customers_phone_trgm", type: Gin)
@@ -409,6 +410,7 @@ model Product {
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   calls     CallProduct[]
   stockItems StockItem[]
+  whatsappConversations WhatsAppConversationProduct[]
 
   @@map("products")
   @@schema("public")
@@ -422,6 +424,64 @@ model CallProduct {
 
   @@id([callId, productId])
   @@map("call_products")
+  @@schema("public")
+}
+
+// One row per customer's WhatsApp thread on this number, mirroring the
+// Call/CallExtraction split: the individual messages are the raw record
+// (WhatsAppMessage below), while this row holds the denormalized "what's
+// this conversation about" summary -- last message preview for the list
+// view, and the AI-classified product(s) discussed, refreshed every time
+// a new message arrives rather than recomputed on every page load.
+model WhatsAppConversation {
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId          String           @unique @map("customer_id") @db.Uuid
+  businessCategory    BusinessCategory @default(unknown) @map("business_category")
+  lastMessageAt        DateTime        @map("last_message_at") @db.Timestamptz(6)
+  lastMessagePreview   String?         @map("last_message_preview")
+  lastMessageDirection CallDirection?  @map("last_message_direction")
+  extractedAt          DateTime?       @map("extracted_at") @db.Timestamptz(6)
+  extractedByModel     String?         @map("extracted_by_model")
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  customer            Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  messages             WhatsAppMessage[]
+  products             WhatsAppConversationProduct[]
+
+  @@index([lastMessageAt(sort: Desc)], map: "idx_wa_conversations_last_message")
+  @@map("whatsapp_conversations")
+  @@schema("public")
+}
+
+model WhatsAppConversationProduct {
+  conversationId String               @map("conversation_id") @db.Uuid
+  productId      String               @map("product_id") @db.Uuid
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  product        Product              @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([conversationId, productId])
+  @@map("whatsapp_conversation_products")
+  @@schema("public")
+}
+
+model WhatsAppMessage {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId    String               @map("conversation_id") @db.Uuid
+  // Meta's own message id (wamid...) -- unique so a redelivered webhook
+  // event (Meta retries on anything but a fast 200) doesn't duplicate it.
+  externalMessageId String               @unique @map("external_message_id")
+  direction         CallDirection
+  // "text", "image", "audio", "document", "location", ... -- only "text"
+  // messages have a real `body` to classify against; anything else still
+  // shows in the thread (as "[Image]" etc.) but contributes nothing to
+  // product classification.
+  messageType       String               @default("text") @map("message_type")
+  body              String?
+  timestamp         DateTime             @db.Timestamptz(6)
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation      WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([conversationId, timestamp], map: "idx_wa_messages_conversation")
+  @@map("whatsapp_messages")
   @@schema("public")
 }
 

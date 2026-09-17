@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Request } from 'express';
 import { BusinessNumbersService } from '../business-numbers/business-numbers.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { WhatsAppMessagesService } from './whatsapp-messages.service';
 
 /**
  * Meta's WhatsApp Calling webhook is a newer (2025) part of the Cloud API --
@@ -26,6 +27,22 @@ interface WhatsAppCallEvent {
   [key: string]: unknown;
 }
 
+// Meta's message-webhook envelope for an inbound text/media message --
+// entry[].changes[].value.messages[], field "messages" (distinct from the
+// "calls" field the WhatsApp Calling handler above reacts to). `timestamp`
+// is a Unix epoch in seconds, as a string.
+interface WhatsAppMessageEvent {
+  id?: string;
+  from?: string;
+  timestamp?: string;
+  type?: string;
+  text?: { body?: string };
+  image?: { caption?: string };
+  video?: { caption?: string };
+  document?: { caption?: string };
+  [key: string]: unknown;
+}
+
 interface WhatsAppWebhookPayload {
   entry?: Array<{
     changes?: Array<{
@@ -33,6 +50,7 @@ interface WhatsAppWebhookPayload {
       value?: {
         metadata?: { phone_number_id?: string };
         calls?: WhatsAppCallEvent[];
+        messages?: WhatsAppMessageEvent[];
       };
     }>;
   }>;
@@ -50,6 +68,7 @@ export class WhatsappWebhooksService {
   constructor(
     private prisma: PrismaService,
     private businessNumbers: BusinessNumbersService,
+    private messages: WhatsAppMessagesService,
   ) {}
 
   /**
@@ -82,13 +101,45 @@ export class WhatsappWebhooksService {
 
     for (const entry of payload.entry ?? []) {
       for (const change of entry.changes ?? []) {
-        if (change.field !== 'calls' || !change.value?.calls) continue;
-        const phoneNumberId = change.value.metadata?.phone_number_id;
-        for (const call of change.value.calls) {
-          await this.handleCallEvent(call, phoneNumberId);
+        const phoneNumberId = change.value?.metadata?.phone_number_id;
+        if (change.field === 'calls' && change.value?.calls) {
+          for (const call of change.value.calls) {
+            await this.handleCallEvent(call, phoneNumberId);
+          }
+        } else if (change.field === 'messages' && change.value?.messages) {
+          for (const msg of change.value.messages) {
+            await this.handleMessageEvent(msg, phoneNumberId);
+          }
         }
       }
     }
+  }
+
+  private async handleMessageEvent(msg: WhatsAppMessageEvent, phoneNumberId: string | undefined): Promise<void> {
+    const externalMessageId = msg.id;
+    const fromPhoneNumber = msg.from?.trim();
+    if (!externalMessageId || !fromPhoneNumber) {
+      this.logger.warn(`WhatsApp message event missing id/from, skipping: ${JSON.stringify(msg)}`);
+      return;
+    }
+
+    const messageType = msg.type ?? 'text';
+    // Only text (and captioned media) carry anything meaningful to
+    // classify against the product catalog -- everything else (stickers,
+    // locations, plain images with no caption, ...) still shows up in the
+    // thread as "[image]" etc. via messageType, just with no body.
+    const body = msg.text?.body ?? msg.image?.caption ?? msg.video?.caption ?? msg.document?.caption ?? null;
+    // Meta sends `timestamp` as a Unix epoch in seconds, as a string.
+    const timestamp = msg.timestamp ? new Date(Number(msg.timestamp) * 1000) : new Date();
+
+    await this.messages.recordIncomingMessage({
+      externalMessageId,
+      fromPhoneNumber,
+      toPhoneNumberId: phoneNumberId,
+      timestamp,
+      messageType,
+      body,
+    });
   }
 
   private async handleCallEvent(call: WhatsAppCallEvent, phoneNumberId: string | undefined): Promise<void> {

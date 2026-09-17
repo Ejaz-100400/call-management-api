@@ -129,6 +129,60 @@ export async function lacksGenuineConversation(transcript: string): Promise<bool
   return (toolUse?.input as { lacksGenuineConversation?: boolean } | undefined)?.lacksGenuineConversation ?? false;
 }
 
+const WHATSAPP_EXTRACTION_TOOL: Anthropic.Tool = {
+  name: 'record_whatsapp_products',
+  description: 'Records which products/services are being discussed in a WhatsApp text conversation with an automotive business (car glass repair/replacement or vehicle modifications).',
+  input_schema: {
+    type: 'object',
+    properties: {
+      productsDiscussed: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Products/services discussed so far in this conversation, written as short catalog-style phrases (e.g. "LED fog ' +
+          'lights", "windshield crack repair") rather than a full sentence -- other context in the message (which car, ' +
+          'which side, urgency, etc.) belongs in your own understanding of the conversation, not folded into this phrase. ' +
+          'Written in English regardless of what language the messages were in. Empty array if nothing product-related has ' +
+          'come up yet (e.g. just a greeting, or a question unrelated to any product).',
+      },
+    },
+    required: ['productsDiscussed'],
+  },
+};
+
+/**
+ * Same idea as extractCallInfo(), but for a WhatsApp text thread rather
+ * than a call transcript -- messages are usually short and arrive over
+ * time, so this re-runs on the accumulated thread (not just the newest
+ * message) every time a new one comes in, and the caller replaces
+ * whatever product links already existed for that conversation.
+ */
+export async function extractWhatsAppProducts(messages: { direction: 'inbound' | 'outbound'; body: string }[]): Promise<string[]> {
+  const transcript = messages.map((m) => `${m.direction === 'inbound' ? 'Customer' : 'Business'}: ${m.body}`).join('\n');
+  if (!transcript.trim()) return [];
+
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-5',
+    max_tokens: 512,
+    system:
+      'You analyze WhatsApp text conversations for an automotive business. Extract only products/services actually ' +
+      'discussed -- omit anything not mentioned, do not guess or infer beyond what was actually said. Messages are ' +
+      'often in Tamil, Hindi, or a mix of languages rather than English -- write every extracted phrase in English ' +
+      'regardless of what language the conversation was in.',
+    messages: [{ role: 'user', content: `WhatsApp conversation so far:\n${transcript}` }],
+    tools: [WHATSAPP_EXTRACTION_TOOL],
+    tool_choice: { type: 'tool', name: 'record_whatsapp_products' },
+  });
+
+  const toolUse = message.content.find(
+    (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
+  );
+  if (!toolUse) return [];
+
+  const raw = toolUse.input as Partial<{ productsDiscussed: string[] }>;
+  return Array.isArray(raw.productsDiscussed) ? raw.productsDiscussed.filter((p): p is string => typeof p === 'string') : [];
+}
+
 export async function extractCallInfo(
   transcript: string,
   meta: { businessCategory: string; callDate: Date },

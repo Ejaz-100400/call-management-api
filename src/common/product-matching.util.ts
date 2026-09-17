@@ -238,7 +238,7 @@ export interface LinkDiscussedProductsResult {
 }
 
 async function findProductByName(
-  client: ProductMatchClient,
+  client: Pick<Prisma.TransactionClient, '$queryRaw'>,
   name: string,
   businessCategory: BusinessCategory,
 ): Promise<{ id: string } | undefined> {
@@ -278,19 +278,21 @@ function stripTrailingParenthetical(text: string): string {
   return text.replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
 
-export async function linkDiscussedProducts(
-  client: ProductMatchClient,
-  callId: string,
+/**
+ * The actual phrase-to-catalog matching, shared by every caller that needs
+ * to turn a list of AI-extracted phrases into real Product ids -- calls
+ * (linkDiscussedProducts below) and WhatsApp conversations
+ * (whatsapp-product-matching.util.ts) alike. Doesn't persist anything
+ * itself; callers own their own join table.
+ */
+export async function matchProductIds(
+  client: Pick<Prisma.TransactionClient, '$queryRaw'>,
   businessCategory: BusinessCategory,
-  productsDiscussed: string[],
-): Promise<LinkDiscussedProductsResult> {
-  // Clear any existing links first -- this runs on reprocess/re-backfill
-  // too, and call_products has no natural way to "upsert" a set membership.
-  await client.callProduct.deleteMany({ where: { callId } });
-
+  phrases: string[],
+): Promise<{ matchedProductIds: Set<string>; unmatchedPhrases: string[] }> {
   const matchedProductIds = new Set<string>();
   const unmatchedPhrases: string[] = [];
-  for (const discussed of productsDiscussed) {
+  for (const discussed of phrases) {
     if (!discussed.trim()) continue;
     const normalized = discussed.trim().toLowerCase();
 
@@ -319,9 +321,47 @@ export async function linkDiscussedProducts(
     else unmatchedPhrases.push(discussed);
   }
 
+  return { matchedProductIds, unmatchedPhrases };
+}
+
+export async function linkDiscussedProducts(
+  client: ProductMatchClient,
+  callId: string,
+  businessCategory: BusinessCategory,
+  productsDiscussed: string[],
+): Promise<LinkDiscussedProductsResult> {
+  // Clear any existing links first -- this runs on reprocess/re-backfill
+  // too, and call_products has no natural way to "upsert" a set membership.
+  await client.callProduct.deleteMany({ where: { callId } });
+
+  const { matchedProductIds, unmatchedPhrases } = await matchProductIds(client, businessCategory, productsDiscussed);
+
   if (matchedProductIds.size > 0) {
     await client.callProduct.createMany({
       data: Array.from(matchedProductIds).map((productId) => ({ callId, productId })),
+      skipDuplicates: true,
+    });
+  }
+
+  return { matchedCount: matchedProductIds.size, unmatchedPhrases };
+}
+
+type WhatsAppMatchClient = Pick<Prisma.TransactionClient, '$queryRaw' | 'whatsAppConversationProduct'>;
+
+/** Same idea as linkDiscussedProducts(), for a WhatsApp conversation's product links instead of a call's. */
+export async function linkWhatsAppProducts(
+  client: WhatsAppMatchClient,
+  conversationId: string,
+  businessCategory: BusinessCategory,
+  productsDiscussed: string[],
+): Promise<LinkDiscussedProductsResult> {
+  await client.whatsAppConversationProduct.deleteMany({ where: { conversationId } });
+
+  const { matchedProductIds, unmatchedPhrases } = await matchProductIds(client, businessCategory, productsDiscussed);
+
+  if (matchedProductIds.size > 0) {
+    await client.whatsAppConversationProduct.createMany({
+      data: Array.from(matchedProductIds).map((productId) => ({ conversationId, productId })),
       skipDuplicates: true,
     });
   }
