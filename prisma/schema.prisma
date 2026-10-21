@@ -143,6 +143,7 @@ model Customer {
   sales       Sale[]
   enquiries   InPersonEnquiry[]
   whatsappConversations WhatsAppConversation[]
+  appointments Appointment[]
 
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_customers_name_trgm", type: Gin)
   @@index([phoneNumber(ops: raw("gin_trgm_ops"))], map: "idx_customers_phone_trgm", type: Gin)
@@ -437,6 +438,10 @@ model CallProduct {
 model Appointment {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   customerName    String            @map("customer_name")
+  // Stored as typed (trimmed), same as sales -- and linked to the Customer
+  // row (created if new) so the appointment connects to their call history.
+  customerPhone   String?           @map("customer_phone")
+  customerId      String?           @map("customer_id") @db.Uuid
   carMake         String?           @map("car_make")
   carModel        String?           @map("car_model")
   branch          Branch
@@ -447,12 +452,14 @@ model Appointment {
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy       User              @relation(fields: [createdByUserId], references: [id], onUpdate: NoAction)
+  customer        Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   // The light upgrade(s) they're coming in for -- picked from the same
   // Products catalog the calls' "products discussed" link to.
   products        AppointmentProduct[]
 
   @@index([appointmentAt(sort: Desc)], map: "idx_appointments_at")
   @@index([status, appointmentAt], map: "idx_appointments_status_at")
+  @@index([customerId], map: "idx_appointments_customer")
   @@map("appointments")
   @@schema("public")
 }

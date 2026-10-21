@@ -6,6 +6,12 @@ export class CreateAppointmentDto {
   @MinLength(1)
   customerName: string;
 
+  // Optional -- a booking can still be made without a number, it just won't
+  // link to a customer's call history.
+  @IsOptional()
+  @IsString()
+  customerPhone?: string;
+
   @IsOptional()
   @IsString()
   carMake?: string;

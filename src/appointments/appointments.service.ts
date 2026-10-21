@@ -33,7 +33,12 @@ export class AppointmentsService {
     const where: Prisma.AppointmentWhereInput = {
       ...(query.status?.length && { status: { in: query.status } }),
       ...(query.branch?.length && { branch: { in: query.branch } }),
-      ...(query.search && { customerName: { contains: query.search, mode: 'insensitive' } }),
+      ...(query.search && {
+        OR: [
+          { customerName: { contains: query.search, mode: 'insensitive' } },
+          { customerPhone: { contains: query.search } },
+        ],
+      }),
       // appointmentAt is a real timestamp, so these are the IST day
       // boundaries (unlike the date-only Sale/Enquiry columns).
       ...((query.dateFrom || query.dateTo) && {
@@ -79,13 +84,30 @@ export class AppointmentsService {
     if (found !== unique.length) throw new BadRequestException('One or more selected light upgrades no longer exist.');
   }
 
+  // Same find-or-create-by-phone the sales and enquiries use, so an
+  // appointment for a number that has called before lands on that same
+  // customer (and their call history). Empty/missing phone means no link.
+  private async resolveCustomer(rawPhone: string | undefined): Promise<{ customerPhone: string | null; customerId: string | null }> {
+    const phone = rawPhone?.trim();
+    if (!phone) return { customerPhone: null, customerId: null };
+    const customer = await this.prisma.customer.upsert({
+      where: { phoneNumber: phone },
+      create: { phoneNumber: phone },
+      update: {},
+    });
+    return { customerPhone: phone, customerId: customer.id };
+  }
+
   async create(dto: CreateAppointmentDto, userId: string) {
     await this.assertProductsExist(dto.productIds);
     const productIds = [...new Set(dto.productIds ?? [])];
+    const { customerPhone, customerId } = await this.resolveCustomer(dto.customerPhone);
 
     const created = await this.prisma.appointment.create({
       data: {
         customerName: dto.customerName.trim(),
+        customerPhone,
+        customerId,
         carMake: dto.carMake?.trim() || null,
         carModel: dto.carModel?.trim() || null,
         branch: dto.branch,
@@ -104,6 +126,13 @@ export class AppointmentsService {
     if (!existing) throw new NotFoundException(`Appointment ${id} not found`);
     await this.assertProductsExist(dto.productIds);
 
+    // Only touch the customer link when the phone was actually sent and
+    // changed -- an unrelated edit (time, status) shouldn't re-resolve it.
+    let phoneFields: { customerPhone: string | null; customerId: string | null } | undefined;
+    if (dto.customerPhone !== undefined && (dto.customerPhone.trim() || null) !== existing.customerPhone) {
+      phoneFields = await this.resolveCustomer(dto.customerPhone);
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
       // The product list is replaced wholesale when sent -- it's a set the
       // form edits as a whole, not rows to patch individually.
@@ -117,6 +146,7 @@ export class AppointmentsService {
         where: { id },
         data: {
           customerName: dto.customerName?.trim(),
+          ...phoneFields,
           carMake: dto.carMake !== undefined ? dto.carMake.trim() || null : undefined,
           carModel: dto.carModel !== undefined ? dto.carModel.trim() || null : undefined,
           branch: dto.branch,
