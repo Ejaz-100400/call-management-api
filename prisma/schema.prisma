@@ -27,6 +27,7 @@ model User {
   editedExtractions CallExtraction[] @relation("EditedBy")
   importedCalls     Call[]           @relation("ImportedBy")
   enteredSales      Sale[]
+  appointments      Appointment[]
   enteredEnquiries  InPersonEnquiry[]
   stockMovements    StockMovement[]
   devices           UserDevice[]
@@ -411,6 +412,7 @@ model Product {
   calls     CallProduct[]
   stockItems StockItem[]
   whatsappConversations WhatsAppConversationProduct[]
+  appointments AppointmentProduct[]
 
   @@map("products")
   @@schema("public")
@@ -424,6 +426,45 @@ model CallProduct {
 
   @@id([callId, productId])
   @@map("call_products")
+  @@schema("public")
+}
+
+// A customer booked in to come to a branch for a light upgrade. Booked by
+// staff, not derived from a call -- a promised time slot, tracked through to
+// whether the customer actually showed up. `source` reuses the Customer
+// Tracker's SaleSource list on purpose, so "where did this customer come
+// from" reads the same in both places.
+model Appointment {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerName    String            @map("customer_name")
+  carMake         String?           @map("car_make")
+  carModel        String?           @map("car_model")
+  branch          Branch
+  source          SaleSource        @default(unknown)
+  appointmentAt   DateTime          @map("appointment_at") @db.Timestamptz(6)
+  status          AppointmentStatus @default(scheduled)
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       User              @relation(fields: [createdByUserId], references: [id], onUpdate: NoAction)
+  // The light upgrade(s) they're coming in for -- picked from the same
+  // Products catalog the calls' "products discussed" link to.
+  products        AppointmentProduct[]
+
+  @@index([appointmentAt(sort: Desc)], map: "idx_appointments_at")
+  @@index([status, appointmentAt], map: "idx_appointments_status_at")
+  @@map("appointments")
+  @@schema("public")
+}
+
+model AppointmentProduct {
+  appointmentId String      @map("appointment_id") @db.Uuid
+  productId     String      @map("product_id") @db.Uuid
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([appointmentId, productId])
+  @@map("appointment_products")
   @@schema("public")
 }
 
@@ -1076,6 +1117,17 @@ enum StockLocation {
   warehouse
 
   @@map("stock_location")
+  @@schema("public")
+}
+
+enum AppointmentStatus {
+  scheduled
+  arrived
+  completed
+  no_show
+  cancelled
+
+  @@map("appointment_status")
   @@schema("public")
 }
 

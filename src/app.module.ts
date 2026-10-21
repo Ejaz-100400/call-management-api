@@ -6,6 +6,7 @@ import { CallsModule } from './calls/calls.module';
 import { CoverageModule } from './coverage/coverage.module';
 import { CustomersModule } from './customers/customers.module';
 import { EmployeesModule } from './employees/employees.module';
+import { AppointmentsModule } from './appointments/appointments.module';
 import { EnquiriesModule } from './enquiries/enquiries.module';
 import { ExportModule } from './export/export.module';
 import { FollowUpsModule } from './follow-ups/follow-ups.module';
@@ -39,6 +40,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
     CoverageModule,
     SalesModule,
     EnquiriesModule,
+    AppointmentsModule,
     StockModule,
     TeamModule,
     WebhooksModule,
