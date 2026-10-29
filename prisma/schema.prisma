@@ -28,6 +28,7 @@ model User {
   importedCalls     Call[]           @relation("ImportedBy")
   enteredSales      Sale[]
   appointments      Appointment[]
+  noStockRequests   NoStockRequest[]
   enteredEnquiries  InPersonEnquiry[]
   stockMovements    StockMovement[]
   devices           UserDevice[]
@@ -144,6 +145,7 @@ model Customer {
   enquiries   InPersonEnquiry[]
   whatsappConversations WhatsAppConversation[]
   appointments Appointment[]
+  noStockRequests NoStockRequest[]
 
   @@index([name(ops: raw("gin_trgm_ops"))], map: "idx_customers_name_trgm", type: Gin)
   @@index([phoneNumber(ops: raw("gin_trgm_ops"))], map: "idx_customers_phone_trgm", type: Gin)
@@ -427,6 +429,33 @@ model CallProduct {
 
   @@id([callId, productId])
   @@map("call_products")
+  @@schema("public")
+}
+
+// A customer asked for something we didn't have in stock -- taken down so it
+// can be followed up when stock arrives, and so we can see what keeps getting
+// asked for. Mirrors InPersonEnquiry's shape: the phone links to a Customer
+// (found or created), and the date is a plain calendar date.
+model NoStockRequest {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerName    String           @map("customer_name")
+  customerPhone   String           @map("customer_phone")
+  customerId      String?          @map("customer_id") @db.Uuid
+  // Where the customer is (area/city) -- free text, like Customer.location.
+  location        String?
+  itemName        String           @map("item_name")
+  // Only ever car_glasses or car_modifications -- enforced by the DTO, since
+  // "unknown" isn't a real stock category.
+  category        BusinessCategory
+  requestDate     DateTime         @map("request_date") @db.Date
+  enteredByUserId String           @map("entered_by_user_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  enteredBy       User             @relation(fields: [enteredByUserId], references: [id], onUpdate: NoAction)
+
+  @@index([requestDate(sort: Desc)], map: "idx_no_stock_requests_date")
+  @@index([customerId], map: "idx_no_stock_requests_customer")
+  @@map("no_stock_requests")
   @@schema("public")
 }
 
