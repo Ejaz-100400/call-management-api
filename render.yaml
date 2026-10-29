@@ -100,4 +100,8 @@ services:
   - type: redis
     name: call-management-redis
     plan: starter
+    # BullMQ (the call-processing queue) needs noeviction: under memory
+    # pressure any other policy is allowed to silently delete queued jobs.
+    # The worker logs "Eviction policy is allkeys-lru. It should be noeviction".
+    maxmemoryPolicy: noeviction
     ipAllowList: []
